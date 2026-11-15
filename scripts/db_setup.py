@@ -11,6 +11,8 @@ Existing objects are inspected and never overwritten unless they carry this proj
 
 from __future__ import annotations
 
+import base64
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -23,6 +25,10 @@ from app.core.settings import load_settings  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 TEST_ROLE = "call360_test_user"
 MARKER = "Call360 CP0.1A automated-test role (least privilege, schema call360_test only)"
+
+
+def _data_key() -> str:
+    return base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
 
 
 def main() -> int:
@@ -84,6 +90,7 @@ def main() -> int:
                 'ALLOWED_ORIGINS=["http://localhost:5174","http://127.0.0.1:5174","http://testserver"]\n'
                 "COOKIE_SECURE=false\nJWT_PRIVATE_KEY_PATH=.secrets/test_jwt_ed25519_private.pem\n"
                 "JWT_PUBLIC_KEY_PATH=.secrets/test_jwt_ed25519_public.pem\n"
+                f"PII_ENCRYPTION_KEY={_data_key()}\nPII_HMAC_KEY={_data_key()}\n"  # D-34, CP0.2
             )
             env_test.chmod(0o600)
             print(f"Created role {TEST_ROLE}; credentials written to .env.test (gitignored, mode 600).")

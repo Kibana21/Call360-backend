@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -61,3 +62,37 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             m = re.match(r"^(https?://[^/]+)", referer)
             origin = m.group(1) if m else None
         return origin in self.allowed_origins
+
+
+_SEARCH_PATHS = ("/api/v1/search", "/api/v1/cases")
+_Q_PARAM = re.compile(r"([?&]q=)[^&]*")
+
+
+class SearchTermRedaction(logging.Filter):
+    """S-14 / BE-SRCH-08: the access log never carries a raw search term; ``q=`` is replaced by its SHA-256."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if (
+            isinstance(args, tuple)
+            and len(args) >= 3
+            and isinstance(args[2], str)
+            and args[2].startswith(_SEARCH_PATHS)
+        ):
+            path = _Q_PARAM.sub(lambda m: m.group(1) + "sha256:" + _q_digest(m.group(0)[len(m.group(1)) :]), args[2])
+            record.args = (*args[:2], path, *args[3:])
+        return True
+
+
+def _q_digest(raw: str) -> str:
+    from urllib.parse import unquote_plus
+
+    from app.domain.register import term_hash
+
+    return term_hash(unquote_plus(raw))
+
+
+def install_log_redaction() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, SearchTermRedaction) for f in access.filters):
+        access.addFilter(SearchTermRedaction())

@@ -2,7 +2,7 @@
 UV ?= uv
 TEST_ENV = CALL360_ENV_FILE=.env.test
 
-.PHONY: setup env db-setup keys migrate bootstrap-admin create-user dev test lint typecheck openapi contract-check audit-verify secret-scan check
+.PHONY: setup env db-setup keys data-keys migrate bootstrap-admin create-user dev test test-seed seed lint typecheck openapi contract-check audit-verify secret-scan check
 
 setup:            ## install locked dependencies
 	$(UV) sync --frozen
@@ -16,6 +16,9 @@ db-setup:         ## create schemas call360 / call360_test and the least-privile
 keys:             ## Ed25519 signing keys for dev and test (gitignored .secrets/)
 	$(UV) run call360 generate-keys
 	$(UV) run call360 --env-file .env.test generate-keys
+
+data-keys:        ## CP0.2 data-protection keys into gitignored .env.test (D-34; values never shown)
+	$(UV) run python scripts/make_data_keys.py --env-file .env.test
 
 migrate:          ## migrate the DEVELOPMENT schema call360 (guarded)
 	$(UV) run alembic upgrade head
@@ -31,6 +34,13 @@ dev:              ## API on 127.0.0.1:8000 against schema call360
 
 test:             ## all backend tests — ONLY schema call360_test via call360_test_user
 	$(TEST_ENV) $(UV) run pytest
+
+test-seed:        ## BE-DATA-02: reset call360_test twice, seed, compare digests (call360 is never touched)
+	$(TEST_ENV) $(UV) run pytest tests/test_domain_seed.py -k be_data_02
+
+seed:             ## seed the DEVELOPMENT schema (owner approval): make seed CONFIRM=call360
+	@test "$(CONFIRM)" = "call360" || (echo "Refusing: development seeding needs CONFIRM=call360 (owner-approved)"; exit 2)
+	$(UV) run call360 seed --allow-development
 
 lint:
 	$(UV) run ruff check .

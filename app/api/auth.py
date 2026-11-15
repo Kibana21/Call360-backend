@@ -24,6 +24,7 @@ from app.core.errors import AppError, error_body
 from app.security import csrf
 from app.security.authz import get_db, request_meta, resolve_grants
 from app.security.cookies import clear_session_cookies, set_session_cookies
+from app.security.scope import resolve_markets
 from app.security.service import RefreshSuperseded, login, logout, refresh
 from app.security.tokens import TokenExpired, TokenInvalid
 
@@ -96,7 +97,7 @@ def post_login(
         ),
         roles=sorted(roles),
         permissions=sorted(perms),
-        markets=[],
+        markets=sorted(resolve_markets(db, issued.principal.id, issued.session.created_at)),
         session_expires_at=issued.session.absolute_expires_at,
     )
 

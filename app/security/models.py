@@ -129,6 +129,19 @@ class GroupRoleMapping(Base):
     approved_by: Mapped[str] = mapped_column(String(80))
 
 
+class GroupScopeMapping(Base):
+    """Group → market scope (CP0.1B-2; seeded, not administered, in Stage 0 — D-39)."""
+
+    __tablename__ = "group_scope_mapping"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("app_group.id"))
+    market_code: Mapped[str] = mapped_column(String(40))
+    effective_from: Mapped[datetime] = mapped_column(TS)
+    effective_to: Mapped[datetime | None] = mapped_column(TS)
+    created_by: Mapped[str] = mapped_column(String(80))
+    change_reason: Mapped[str] = mapped_column(Text)
+
+
 class AuthSession(Base):
     __tablename__ = "auth_session"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)

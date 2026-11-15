@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     jwt_audience: str = "call360-api"
     refresh_token_pepper: SecretStr
     csrf_secret: SecretStr
+    # Data-protection keys (S-13, D-34): base64url, 32 bytes each, independent. Always required for tests.
+    # Elsewhere they are validated when present and enforced by app.domain.protection.protection_for wherever
+    # the CP0.2 domain exists (startup, readiness, seed), so a pre-CP0.2 development schema still runs.
+    pii_encryption_key: SecretStr | None = None
+    pii_hmac_key: SecretStr | None = None
 
     access_token_ttl_seconds: int = 600
     refresh_idle_seconds: int = 1800
@@ -74,7 +79,21 @@ class Settings(BaseSettings):
             raise ValueError("application and test database URLs must differ")
         if self.app_env == "test" and self.expected_db_role == self.app_db_role:
             raise ValueError("tests must not use the application database role")
+        self._check_data_protection_keys()
         return self
+
+    def _check_data_protection_keys(self) -> None:
+        keys = (self.pii_encryption_key, self.pii_hmac_key)
+        if self.app_env == "test" and None in keys:
+            raise ValueError("APP_ENV=test requires PII_ENCRYPTION_KEY and PII_HMAC_KEY (scripts/make_data_keys.py)")
+        if (keys[0] is None) != (keys[1] is None):
+            raise ValueError("PII_ENCRYPTION_KEY and PII_HMAC_KEY must be configured together")
+        if keys[0] is not None and keys[1] is not None:
+            from app.domain.protection import decode_key  # local import: protection depends on settings
+
+            enc, mac = decode_key(keys[0].get_secret_value()), decode_key(keys[1].get_secret_value())
+            if enc == mac:
+                raise ValueError("PII_ENCRYPTION_KEY and PII_HMAC_KEY must differ")
 
     @property
     def database_url_secret(self) -> SecretStr | None:

@@ -15,7 +15,9 @@ from app.config.models import CodeList, CodeListVersion, CodeValue, FeatureFlag,
 from app.config.seed import seed_config
 from app.config.service import active_values, values_of
 from app.core.settings import Settings
+from app.domain.governed import VALUES as GOVERNED_VALUES
 from app.security.models import AuditEvent, AuthSession, Principal
+from tests.domain_support import assert_audit_append_only, audit_rows
 from tests.support import Account, csrf_header, login, migrate
 
 GOVERNED = {
@@ -53,7 +55,11 @@ def test_be_cfg_01_seeded_definitions_and_classification(client: TestClient, adm
     lists = _lists(client)
     assert set(lists) == GOVERNED | {"market"}
     assert all(lists[c]["governed"] for c in GOVERNED) and not lists["market"]["governed"]
-    assert all(lists[c]["active_version"] is None and lists[c]["versions"] == [] for c in GOVERNED)  # CP0.2 seeds
+    # Governed lists receive version 1 from CP0.2 migration 0007 (D-26, D-36); they stay read-only.
+    for c in GOVERNED:
+        assert lists[c]["active_version"] == 1 and [v["version"] for v in lists[c]["versions"]] == [1], c
+        codes = [x["code"] for x in lists[c]["versions"][0]["values"]]
+        assert codes == [code for code, _, _ in GOVERNED_VALUES[c]], c
     market = lists["market"]
     v1 = next(v for v in market["versions"] if v["version"] == 1)
     assert {(x["code"], x["attributes"].get("synthetic")) for x in v1["values"]} == {("SG", True), ("MY", True)}
@@ -134,6 +140,13 @@ def test_be_cfg_01_governed_lists_are_read_only_and_audited(
     client: TestClient, admin: Account, db: Session, list_code: str
 ) -> None:
     login(client, admin)
+
+    def versions() -> int:
+        return db.execute(
+            select(func.count()).select_from(CodeListVersion).join(CodeList).where(CodeList.code == list_code)
+        ).scalar_one()
+
+    before = versions()
     r = _post_version(
         client,
         list_code,
@@ -144,12 +157,8 @@ def test_be_cfg_01_governed_lists_are_read_only_and_audited(
         },
     )
     assert r.status_code == 403 and r.json()["code"] == "GOVERNED_LIST_READ_ONLY"
-    assert (
-        db.execute(
-            select(func.count()).select_from(CodeListVersion).join(CodeList).where(CodeList.code == list_code)
-        ).scalar_one()
-        == 0
-    )
+    db.rollback()
+    assert versions() == before == 1  # only the CP0.2 version 1; the denied attempt created nothing
     assert (
         db.execute(
             select(AuditEvent).where(
@@ -292,16 +301,23 @@ def _identity_counts(db: Session) -> tuple[int, int, int]:
 
 
 def test_be_cfg_03_migration_preserves_cp01a_data(
-    client: TestClient, admin: Account, db: Session, settings: Settings
+    fresh_schema: None, client: TestClient, admin: Account, db: Session, settings: Settings, engine: Engine
 ) -> None:
     login(client, admin)
     before = _identity_counts(db)
+    audit_before = audit_rows(engine)
     db.rollback()
     migrate(settings, "0001_identity_foundation", down=True)
-    assert _identity_counts(db) == before
+    assert _identity_counts(db)[:2] == before[:2]
     db.rollback()
     migrate(settings, "head")
-    assert _identity_counts(db) == before
+    assert _identity_counts(db)[:2] == before[:2]
+    # Audit is append-only: the CP0.2 governed values (0007) audit their removal and re-activation (D-36).
+    assert assert_audit_append_only(audit_before, audit_rows(engine)) == {
+        "CONFIG.CODE_LIST_VERSION_REMOVED": 9,
+        "CONFIG.CODE_LIST_VERSION_ACTIVATED": 9,
+        "ADMIN.GROUP_MAPPING_CHANGED": 4,
+    }
     assert db.execute(select(func.count()).select_from(CodeList)).scalar_one() == 10
 
 

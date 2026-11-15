@@ -42,7 +42,7 @@ def test_be_sec_01_every_route_declares_access(app) -> None:  # type: ignore[no-
     assert not problems, problems
 
 
-def test_be_sec_01_exact_cp01a_and_b1_surface(app) -> None:  # type: ignore[no-untyped-def]
+def test_be_sec_01_exact_api_surface(app) -> None:  # type: ignore[no-untyped-def]
     surface = {(m, r.path) for r in _api_routes() for m in r.methods}
     documented = {(m.upper(), p) for p, ops in app.openapi()["paths"].items() for m in ops}
     assert surface == documented  # inventory covers every served operation
@@ -62,6 +62,38 @@ def test_be_sec_01_exact_cp01a_and_b1_surface(app) -> None:  # type: ignore[no-u
         ("POST", "/api/v1/admin/code-lists/{code}/versions"),
         ("GET", "/api/v1/admin/feature-flags"),
         ("PATCH", "/api/v1/admin/feature-flags/{code}"),
+        # F1 Overview (API-030…034)
+        ("GET", "/api/v1/dashboard/kpis"),
+        ("GET", "/api/v1/dashboard/trend"),
+        ("GET", "/api/v1/dashboard/attention"),
+        ("GET", "/api/v1/dashboard/activity"),
+        ("GET", "/api/v1/dashboard/risk-distribution"),
+        # F2 Work Queues and search (API-035, 036, 070, 071, 076)
+        ("GET", "/api/v1/cases"),
+        ("GET", "/api/v1/cases/facets"),
+        ("GET", "/api/v1/work-queues"),
+        ("GET", "/api/v1/search"),
+        ("GET", "/api/v1/search/suggest"),
+        # F3 Call Detail (API-037…047, API-063)
+        ("GET", "/api/v1/cases/{case_id}"),
+        ("GET", "/api/v1/cases/{case_id}/attempts"),
+        ("GET", "/api/v1/cases/{case_id}/script-assignment"),
+        ("GET", "/api/v1/cases/{case_id}/timeline"),
+        ("GET", "/api/v1/cases/{case_id}/findings"),
+        ("GET", "/api/v1/cases/{case_id}/holds"),
+        ("GET", "/api/v1/attempts/{attempt_id}"),
+        ("GET", "/api/v1/sessions/{session_id}"),
+        ("GET", "/api/v1/sessions/{session_id}/transcript"),
+        ("GET", "/api/v1/sessions/{session_id}/media"),
+        ("GET", "/api/v1/survey-runs/{survey_run_id}"),
+        ("GET", "/api/v1/script-versions/{script_version_id}"),
+        # F4 Policy Explorer and Policy Detail (API-050…055)
+        ("GET", "/api/v1/policies"),
+        ("GET", "/api/v1/policies/{policy_id}"),
+        ("GET", "/api/v1/policies/{policy_id}/parties"),
+        ("GET", "/api/v1/policies/{policy_id}/sales"),
+        ("GET", "/api/v1/sales/{sale_event_id}"),
+        ("GET", "/api/v1/policies/{policy_id}/history"),
     }
 
 

@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT))
 from app.audit.chain import Actor, RequestMeta  # noqa: E402
 from app.core.settings import load_settings  # noqa: E402
 from app.db.session import make_engine, make_session_factory  # noqa: E402
+from app.domain.protection import DataProtection  # noqa: E402
+from app.domain.seed import seed  # noqa: E402
 from app.security.identity import create_local_account  # noqa: E402
 from tests.support import reset_test_schema  # noqa: E402
 
@@ -34,6 +36,8 @@ def main() -> int:
         raise SystemExit("e2e_setup requires the test configuration")
     engine = make_engine(settings)
     reset_test_schema(engine, settings)
+    with engine.begin() as conn:  # S0-SEED-1 so the Overview runs on real seeded data (call360_test only)
+        seed(conn, settings.target_schema, DataProtection.from_settings(settings))
     out: dict[str, dict[str, str]] = {}
     with make_session_factory(engine)() as db, db.begin():
         for username, display, group in ACCOUNTS:
@@ -53,7 +57,7 @@ def main() -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(out))
     target.chmod(0o600)
-    print(f"E2E schema reset and {len(out)} accounts created")
+    print(f"E2E schema reset, S0-SEED-1 seeded and {len(out)} accounts created")
     return 0
 
 

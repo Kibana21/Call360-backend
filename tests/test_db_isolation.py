@@ -9,6 +9,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from app.core.settings import Settings
 from app.db.guards import UnsafeDatabaseTarget, verify_connection
+from tests.domain_support import revisions, tables_at
 from tests.support import migrate, reset_test_schema
 
 CP01A_TABLES = {
@@ -29,7 +30,7 @@ CP01A_TABLES = {
     "audit_event",
 }
 CP01B1_TABLES = {"code_list", "code_list_version", "code_value", "feature_flag", "feature_flag_change"}
-HEAD_TABLES = CP01A_TABLES | CP01B1_TABLES
+HEAD_TABLES = tables_at(revisions()[-1])  # CP0.1A + CP0.1B-1 + the CP0.2 tables built so far (S0_DATA_MODEL §4.6)
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -37,11 +38,11 @@ def _tables(engine: Engine) -> set[str]:
         return set(c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='call360_test'")).scalars())
 
 
-def test_be_data_01_head_creates_exactly_cp01a_and_b1_tables(engine: Engine) -> None:
+def test_be_data_01_head_creates_exactly_the_built_tables(fresh_schema: None, engine: Engine) -> None:
     assert _tables(engine) == HEAD_TABLES | {"alembic_version"}
 
 
-def test_be_data_01_downgrade_and_reupgrade(engine: Engine, settings: Settings) -> None:
+def test_be_data_01_downgrade_and_reupgrade(fresh_schema: None, engine: Engine, settings: Settings) -> None:
     migrate(settings, "base", down=True)
     assert _tables(engine) == {"alembic_version"}
     migrate(settings, "head")

@@ -11,7 +11,7 @@ from collections.abc import Iterator  # noqa: E402
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import Engine  # noqa: E402
+from sqlalchemy import Connection, Engine  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.core.settings import Settings, load_settings  # noqa: E402
@@ -67,3 +67,31 @@ def user(db: Session) -> Account:
 @pytest.fixture()
 def admin(db: Session) -> Account:
     return make_account(db, "LOCAL_ADMIN", prefix="admin")
+
+
+@pytest.fixture()
+def fresh_schema(engine: Engine, settings: Settings) -> None:
+    """Guarded reset of call360_test to an unseeded head (for migration round-trip tests)."""
+    reset_test_schema(engine, settings)
+
+
+@pytest.fixture()
+def conn(engine: Engine) -> Iterator[Connection]:
+    """A connection whose work is always rolled back (CP0.2 integrity tests)."""
+    with engine.connect() as c:
+        tx = c.begin()
+        try:
+            yield c
+        finally:
+            tx.rollback()
+
+
+@pytest.fixture()
+def seeded(engine: Engine, settings: Settings) -> Iterator[None]:
+    """Ensure S0-SEED-1 is present in call360_test (re-seeds after any test that reset the schema)."""
+    from app.domain.protection import DataProtection
+    from app.domain.seed import seed
+
+    with engine.begin() as c:
+        seed(c, settings.target_schema, DataProtection.from_settings(settings))
+    yield

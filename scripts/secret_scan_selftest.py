@@ -59,6 +59,8 @@ FORMATS: dict[str, tuple[str, Callable[[], str]]] = {
     ),
     "refresh_token_pepper": (".env", lambda: f"REFRESH_TOKEN_PEPPER={secrets.token_urlsafe(32)}\n"),
     "csrf_secret": (".env", lambda: f"CSRF_SECRET={secrets.token_urlsafe(32)}\n"),
+    "pii_encryption_key": (".env.test", lambda: f"PII_ENCRYPTION_KEY={secrets.token_urlsafe(32)}\n"),
+    "pii_hmac_key": (".env.test", lambda: f"PII_HMAC_KEY={secrets.token_urlsafe(32)}\n"),
     "dev_account_password": (".env.local", lambda: f"DEV_ADMIN_PASSWORD={secrets.token_urlsafe(18)}\n"),
     "cli_password_env": ("run.sh", lambda: f"export CALL360_NEW_PASSWORD='{secrets.token_urlsafe(14)}'\n"),
     "password_constant": ("config.py", lambda: f'SMTP_PASSWORD = "{_rand(16)}"\n'),

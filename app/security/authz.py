@@ -29,6 +29,7 @@ from app.security.models import (
     Role,
     RolePermission,
 )
+from app.security.scope import resolve_markets
 from app.security.tokens import TokenExpired, TokenInvalid, TokenService
 
 
@@ -42,7 +43,7 @@ class AuthContext:
     permissions: frozenset[str]
     access_expires_at: datetime
     session: AuthSession
-    # Market scope arrives with CP0.1B-2; until then no principal has scope (fail closed).
+    # Effective market scope (CP0.1B-2, D-39): mapped markets ∩ enabled markets ({SG}). Empty = no business data.
     markets: frozenset[str] = field(default_factory=frozenset)
 
     @property
@@ -106,8 +107,9 @@ def authenticate(request: Request, db: Session = Depends(get_db)) -> AuthContext
         raise AppError(401, "AUTH_SESSION_INVALID", "Session is no longer valid")
     username = db.execute(select(IdentityBinding.username).where(IdentityBinding.principal_id == principal.id)).scalar()
     roles, perms = resolve_grants(db, principal.id, now)
+    markets = resolve_markets(db, principal.id, now)
     return AuthContext(
-        principal.id, principal.display_name, username, session.id, roles, perms, claims.expires_at, session
+        principal.id, principal.display_name, username, session.id, roles, perms, claims.expires_at, session, markets
     )
 
 

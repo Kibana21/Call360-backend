@@ -5,6 +5,9 @@ Commands
   bootstrap-admin      Create the first administrator; refuses if an active admin exists (C-6).
   create-local-user    Create a developer account in a local group (developer-specific secret).
   audit-verify         Recompute the audit hash chain and report the head digest.
+  seed                 Deterministic synthetic seed S0-SEED-1 (CP0.2). The development schema needs
+                       --allow-development (owner-approved deployment only).
+  seed-digest          Print the CP0.2 content digest and row counts (no writes).
 
 Passwords are read from a no-echo prompt or a one-shot environment variable that is removed from the
 process environment immediately; they are never printed or logged.
@@ -17,10 +20,16 @@ import getpass
 import os
 import sys
 
+from sqlalchemy import text
+
 from app.audit.chain import Actor, RequestMeta, verify_chain
 from app.core.settings import load_settings
 from app.db.guards import verify_connection
 from app.db.session import make_engine, make_session_factory
+from app.domain.digest import content_digest
+from app.domain.protection import DataProtection, DataProtectionUnavailable
+from app.domain.seed import SeedError, counts, seed
+from app.main import MIGRATION_HEAD
 from app.security.identity import AccountError, active_admin_count, create_local_account
 from app.security.passwords import PasswordPolicyError
 from app.security.tokens import generate_keypair
@@ -100,6 +109,45 @@ def cmd_audit_verify(args: argparse.Namespace) -> int:
     return 1
 
 
+def _seed_target(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    settings = load_settings(args.env_file)
+    if settings.target_schema == "call360" and not getattr(args, "allow_development", False):
+        raise SystemExit("Refusing: seeding the development schema needs --allow-development (owner approval).")
+    engine = make_engine(settings)
+    with engine.connect() as conn:
+        verify_connection(conn, settings)
+        head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    if head != MIGRATION_HEAD:
+        raise SystemExit(f"Refusing: schema is at {head}, expected {MIGRATION_HEAD} (run migrations first).")
+    return settings, engine
+
+
+def cmd_seed(args: argparse.Namespace) -> int:
+    settings, engine = _seed_target(args)
+    try:
+        protection = DataProtection.from_settings(settings)
+        with engine.begin() as conn:
+            report = seed(conn, settings.target_schema, protection)
+    except (SeedError, DataProtectionUnavailable) as exc:
+        print(f"Refusing: {exc}")
+        return 2
+    verb = "Seeded" if report.created else "Already seeded (no changes)"
+    print(f"{verb} {report.version} in {settings.target_schema}: digest {report.digest}")
+    print(f"Key ids (not key material): {report.key_ids}")
+    for table, n in report.counts.items():
+        print(f"  {table:32} {n}")
+    return 0
+
+
+def cmd_seed_digest(args: argparse.Namespace) -> int:
+    settings, engine = _seed_target(args)
+    with engine.begin() as conn:
+        print(f"{settings.target_schema}: digest {content_digest(conn, settings.target_schema)}")
+        for table, n in counts(conn, settings.target_schema).items():
+            print(f"  {table:32} {n}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="call360")
     parser.add_argument("--env-file", default=None, help="env file (default: $CALL360_ENV_FILE or .env)")
@@ -127,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
 
     verify = sub.add_parser("audit-verify")
     verify.set_defaults(func=cmd_audit_verify)
+
+    for name, func in (("seed", cmd_seed), ("seed-digest", cmd_seed_digest)):
+        p = sub.add_parser(name)
+        p.add_argument("--allow-development", action="store_true", help="permit schema call360 (owner approval)")
+        p.set_defaults(func=func)
 
     args = parser.parse_args(argv)
     return int(args.func(args))
