@@ -42,7 +42,7 @@ def test_be_sec_01_every_route_declares_access(app) -> None:  # type: ignore[no-
     assert not problems, problems
 
 
-def test_be_sec_01_exact_cp01a_surface(app) -> None:  # type: ignore[no-untyped-def]
+def test_be_sec_01_exact_cp01a_and_b1_surface(app) -> None:  # type: ignore[no-untyped-def]
     surface = {(m, r.path) for r in _api_routes() for m in r.methods}
     documented = {(m.upper(), p) for p, ops in app.openapi()["paths"].items() for m in ops}
     assert surface == documented  # inventory covers every served operation
@@ -57,6 +57,11 @@ def test_be_sec_01_exact_cp01a_surface(app) -> None:  # type: ignore[no-untyped-
         ("GET", "/api/v1/admin/users"),
         ("PATCH", "/api/v1/admin/users/{principal_id}"),
         ("GET", "/api/v1/admin/audit-events"),
+        # CP0.1B-1 (API-022…025)
+        ("GET", "/api/v1/admin/code-lists"),
+        ("POST", "/api/v1/admin/code-lists/{code}/versions"),
+        ("GET", "/api/v1/admin/feature-flags"),
+        ("PATCH", "/api/v1/admin/feature-flags/{code}"),
     }
 
 

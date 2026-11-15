@@ -28,6 +28,8 @@ CP01A_TABLES = {
     "login_attempt",
     "audit_event",
 }
+CP01B1_TABLES = {"code_list", "code_list_version", "code_value", "feature_flag", "feature_flag_change"}
+HEAD_TABLES = CP01A_TABLES | CP01B1_TABLES
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -35,15 +37,15 @@ def _tables(engine: Engine) -> set[str]:
         return set(c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='call360_test'")).scalars())
 
 
-def test_be_data_01_head_creates_exactly_cp01a_tables(engine: Engine) -> None:
-    assert _tables(engine) == CP01A_TABLES | {"alembic_version"}
+def test_be_data_01_head_creates_exactly_cp01a_and_b1_tables(engine: Engine) -> None:
+    assert _tables(engine) == HEAD_TABLES | {"alembic_version"}
 
 
 def test_be_data_01_downgrade_and_reupgrade(engine: Engine, settings: Settings) -> None:
     migrate(settings, "base", down=True)
     assert _tables(engine) == {"alembic_version"}
     migrate(settings, "head")
-    assert _tables(engine) == CP01A_TABLES | {"alembic_version"}
+    assert _tables(engine) == HEAD_TABLES | {"alembic_version"}
 
 
 def test_be_data_14_test_role_has_no_rights_on_development_schema(engine: Engine) -> None:

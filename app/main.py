@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import admin, auth, health, me
+from app.api import admin, admin_config, auth, health, me
 from app.core.errors import install_error_handlers
 from app.core.middleware import SecurityMiddleware
 from app.core.settings import Settings, get_settings
@@ -17,8 +17,8 @@ from app.security.cookies import cookie_names
 from app.security.rate_limit import SlidingWindowLimiter
 from app.security.tokens import TokenService
 
-MIGRATION_HEAD = "0001_identity_foundation"
-ROUTERS = (health.router, auth.router, me.router, admin.router)
+MIGRATION_HEAD = "0002_config_foundation"
+ROUTERS = (health.router, auth.router, me.router, admin.router, admin_config.router)
 
 
 def create_app(settings: Settings | None = None, *, with_database: bool = True) -> FastAPI:
