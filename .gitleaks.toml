@@ -1,0 +1,28 @@
+# Call360-backend gitleaks configuration: default rules plus Call360-specific rules.
+[extend]
+useDefault = true
+
+# ---- Call360-specific rules (CP0.1A scanner-coverage fix) --------------------------------------
+# gitleaks' default rules never match PostgreSQL URLs with embedded passwords, and its generic rule
+# skips ~3% of random values. These rules are deterministic for the secret formats Call360 uses.
+# Placeholders are excluded by construction: values containing < > { } $ are never matched, so
+# `<password>`, `<generated>`, `{password}` and `${VAR}` in examples and templates do not fire.
+
+[[rules]]
+id = "call360-postgres-url-credentials"
+description = "PostgreSQL connection string with an embedded password"
+regex = '''(?i)\bpostgres(?:ql)?(?:\+[a-z0-9]+)?://[^\s:/@'"`<>{}$]+:([^\s@'"`<>{}$]{3,})@'''
+secretGroup = 1
+keywords = ["postgres"]
+
+[[rules]]
+id = "call360-secret-assignment"
+description = "Call360 secret, pepper, password or token assigned in env/config/constant style"
+regex = '''(?m)^[ \t]*(?:export[ \t]+)?(?:[A-Z0-9]+_)*(?:REFRESH_TOKEN_PEPPER|CSRF_SECRET|PASSWORD|PASSWD|SECRET|PEPPER|PRIVATE_KEY|API_KEY|TOKEN)[ \t]*=[ \t]*["']?([^\s"'<>{}$#]{8,})'''
+secretGroup = 1
+keywords = ["pepper", "secret", "password", "passwd", "token", "private_key", "api_key"]
+
+  [[rules.allowlists]]
+  description = "Synthetic test-fixture password used only against schema call360_test (tests/support.py)"
+  regexTarget = "secret"
+  regexes = ['''^Correct-Horse-Battery-9$''']
