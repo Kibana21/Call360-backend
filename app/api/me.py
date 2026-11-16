@@ -29,4 +29,5 @@ def get_me(request: Request, auth: AuthContext = Depends(authenticate)) -> MeRes
             access_expires_at=auth.access_expires_at,
         ),
         environment=EnvironmentInfo(app_env=settings.app_env, data_policy=settings.data_policy),
+        password_change_required=auth.password_change_required,
     )

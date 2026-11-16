@@ -50,6 +50,7 @@ CP02_TABLES: tuple[str, ...] = tuple(t for tables in MIGRATION_TABLES.values() f
 LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
     "0008_market_scope": ("group_scope_mapping",),
     "0009_intake": ("intake_run", "intake_item", "field_change"),  # CP0.4a intake ledger (Build = CP0.4)
+    "0012_session_event": ("session_event",),  # S1-B voice-session event ledger (EVD-002)
 }
 DEFERRED_TABLES = frozenset({"transcript_segment", "media_asset", "risk_override", "review_decision"})
 

@@ -17,7 +17,10 @@ PUBLIC_ROUTES = frozenset(
     }
 )
 # Routes requiring only an authenticated session (no specific permission).
-AUTHENTICATED_ROUTES = frozenset({("GET", "/api/v1/me")})
+# Routes any signed-in principal may use, including one that must still replace a one-time password (CP0.1B-3).
+AUTHENTICATED_ROUTES = frozenset(
+    {("GET", "/api/v1/me"), ("GET", "/api/v1/auth/session"), ("POST", "/api/v1/me/password")}
+)
 
 
 def csrf_protected[F: Callable[..., Any]](fn: F) -> F:

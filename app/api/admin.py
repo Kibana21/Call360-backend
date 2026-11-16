@@ -22,6 +22,7 @@ from app.api.schemas import (
     ErrorResponse,
     PageInfo,
 )
+from app.audit import scope
 from app.audit.chain import write_audit
 from app.core.errors import AppError
 from app.security import csrf
@@ -193,10 +194,15 @@ def update_user(
     return _user_view(db, principal, now)
 
 
+def _seed_view(e: AuditEvent) -> dict[str, Any] | None:
+    """The seed manifest without its dataset-wide (all-market) totals; the digest identifies the seed."""
+    return {k: v for k, v in (e.after or {}).items() if k not in scope.SEED_TOTALS}
+
+
 @router.get("/audit-events", response_model=AuditEventList, operation_id="admin_audit_events_list", responses=_ERR)
 def list_audit_events(
     db: Session = Depends(get_db),
-    _auth: AuthContext = Depends(require("audit.read")),
+    auth: AuthContext = Depends(require("audit.read")),
     action: str | None = Query(None, max_length=64),
     outcome: str | None = Query(None, pattern="^(SUCCEEDED|DENIED|FAILED)$"),
     actor_principal_id: uuid.UUID | None = None,
@@ -206,7 +212,9 @@ def list_audit_events(
     limit: int = Query(50, ge=1, le=200),
     cursor: str | None = Query(None, max_length=200),
 ) -> AuditEventList:
-    stmt = select(AuditEvent).order_by(AuditEvent.seq.desc()).limit(limit + 1)
+    markets = sorted(auth.markets)
+    # CP0.6-F1: the operational view follows the market scope; the ledger itself is unchanged (app.audit.scope).
+    stmt = select(AuditEvent).where(scope.visible(markets)).order_by(AuditEvent.seq.desc()).limit(limit + 1)
     if action:
         stmt = stmt.where(AuditEvent.action.startswith(action, autoescape=True))
     if outcome:
@@ -226,6 +234,7 @@ def list_audit_events(
         stmt = stmt.where(AuditEvent.seq < int(seq))
     rows = db.execute(stmt).scalars().all()
     page, more = rows[:limit], len(rows) > limit
+    hidden_ids = scope.redacted_ids(db, [e.id for e in page], markets)
     items = [
         AuditEventOut(
             event_id=e.id,
@@ -241,11 +250,12 @@ def list_audit_events(
             correlation_id=e.correlation_id,
             source_ip=e.source_ip,
             entity_type=e.entity_type,
-            entity_id=e.entity_id,
+            entity_id=None if e.id in hidden_ids else e.entity_id,
             entity_version=e.entity_version,
             reason=e.reason,
             before=e.before,
-            after=e.after,
+            after=_seed_view(e) if e.action == "SEED.MANIFEST" else e.after,
+            scope_redacted=e.id in hidden_ids or e.action == "SEED.MANIFEST",
         )
         for e in page
     ]

@@ -94,6 +94,8 @@ def create_local_account(
     actor: Actor,
     meta: RequestMeta,
     audit_action: str = "ADMIN.USER_CREATED",
+    audit_reason: str | None = None,
+    audit_extra: dict[str, object] | None = None,
 ) -> Principal:
     username = normalise_username(username)
     if not 3 <= len(username) <= 64 or not username.replace(".", "").replace("_", "").replace("-", "").isalnum():
@@ -140,6 +142,13 @@ def create_local_account(
         entity_type="principal",
         entity_id=str(principal.id),
         entity_version=1,
-        after={"username": username, "display_name": principal.display_name, "group": group_code, "status": "ACTIVE"},
+        reason=audit_reason,
+        after={
+            "username": username,
+            "display_name": principal.display_name,
+            "group": group_code,
+            "status": "ACTIVE",
+            **(audit_extra or {}),
+        },
     )
     return principal

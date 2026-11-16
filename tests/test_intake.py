@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.audit.chain import verify_chain
 from app.core.settings import Settings
 from app.domain.digest import content_digest
+from app.domain.intake import SYNTHETIC_PRODUCTS
 from app.domain.protection import DataProtection, aad
 from app.domain.seed import _manifest_event, seed
 from tests.domain_support import SCHEMA
@@ -588,6 +590,7 @@ def test_permissions_csrf_and_audit(client: TestClient, user: Account, db: Sessi
     login(client, user)
     for method, path in (
         ("GET", "/api/v1/intake/sources"),
+        ("GET", "/api/v1/intake/reference"),
         ("GET", "/api/v1/intake/import-runs"),
         ("GET", f"/api/v1/intake/import-runs/{uuid.uuid4()}"),
         ("POST", f"{PATH}/preview"),
@@ -601,11 +604,31 @@ def test_permissions_csrf_and_audit(client: TestClient, user: Account, db: Sessi
         "AND actor_principal_id = :p AND entity_id LIKE '/api/v1/intake%'",
         p=user.principal_id,
     )
-    assert denied == 5
+    assert denied == 6
     client.cookies.clear()
     login(client, make_account(db, "LOCAL_ADMIN", prefix="admin"))
     r = client.post(PATH, json=txn(), headers={"Idempotency-Key": f"k-{uuid.uuid4().hex}"})
     assert r.status_code == 403 and r.json()["code"] == "CSRF_INVALID"
+
+
+def test_reference_data_lists_what_the_validator_accepts(signed_in: TestClient, db: Session) -> None:
+    """API-087 (CP0.4b): values come from the validator's own sources; a transaction built from them previews."""
+    r = signed_in.get("/api/v1/intake/reference")
+    assert r.status_code == 200, r.text
+    ref = r.json()
+    assert (ref["market_code"], ref["currency"], ref["source_system_prefix"]) == ("SG", "SGD", "SYN-")
+    products = {(p["product_code"], p["product_family"], p["product_subtype"]) for p in ref["products"]}
+    assert products == SYNTHETIC_PRODUCTS
+    active = scalar(db, f"SELECT count(*) FROM {SCHEMA}.fsc_representative WHERE status = 'ACTIVE'")
+    assert len(ref["fscs"]) == active and all(f["channel"] in ref["enums"]["selling_channel"] for f in ref["fscs"])
+    assert [b["code"] for b in ref["risk_bands"]] == ["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
+    assert {c["channel"] for c in ref["contact_formats"]} == {"PHONE", "EMAIL"}
+    assert all(re.fullmatch(c["pattern"], c["example"]) for c in ref["contact_formats"])
+    assert ref["enums"]["party_role"][0] == "OWNER" and "TOP_UP" in ref["enums"]["sale_event_type"]
+    assert (ref["priority_min"], ref["priority_max"]) == (1, 5)
+    fsc = ref["fscs"][1]
+    body = txn(sale__fsc_ref=fsc["fsc_ref"], sale__selling_channel=fsc["channel"])
+    assert signed_in.post(f"{PATH}/preview", json=body, headers=csrf_header(signed_in)).status_code == 200
 
 
 def test_seeded_records_are_unchanged_after_intake(signed_in: TestClient, engine: Engine) -> None:

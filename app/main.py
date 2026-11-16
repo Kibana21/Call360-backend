@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -9,6 +11,7 @@ from fastapi import FastAPI
 
 from app.api import (
     admin,
+    admin_access,
     admin_config,
     auth,
     case_detail,
@@ -18,8 +21,11 @@ from app.api import (
     intake,
     me,
     policies,
+    reviews,
     risk,
+    scripts,
     search,
+    voice,
 )
 from app.core.errors import install_error_handlers
 from app.core.middleware import SecurityMiddleware, install_log_redaction
@@ -31,17 +37,32 @@ from app.security.cookies import cookie_names
 from app.security.rate_limit import SlidingWindowLimiter
 from app.security.tokens import TokenService
 
-MIGRATION_HEAD = "0009_intake"
+
+async def _voice_sweeper(app: FastAPI, every_s: float = 15.0) -> None:
+    """S1-B: finalise abandoned, interrupted-too-long and orphaned voice sessions."""
+    while True:
+        await asyncio.sleep(every_s)
+        try:
+            await asyncio.to_thread(voice.run_sweep, app)
+        except Exception:  # noqa: BLE001 — the sweeper must keep running; the next pass retries
+            logging.getLogger("call360.voice").exception("voice session sweep failed")
+
+
+MIGRATION_HEAD = "0012_session_event"
 ROUTERS = (
     health.router,
     auth.router,
     me.router,
     admin.router,
+    admin_access.router,
     admin_config.router,
     dashboard.router,
     cases.router,
     search.router,
     case_detail.router,
+    scripts.router,
+    reviews.router,
+    voice.router,
     policies.router,
     risk.router,
     intake.router,
@@ -58,8 +79,12 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
                 verify_connection(conn, settings)
                 # D-34: refuse to start on a CP0.2 schema without both data-protection keys.
                 app.state.data_protection = protection_for(conn, settings)
+            # S1-B: nothing is live after a (re)start, so sessions left open are finalised; then sweep periodically.
+            voice.run_sweep(app, startup=True)
+            sweeper = asyncio.create_task(_voice_sweeper(app))
         yield
         if with_database:
+            sweeper.cancel()
             app.state.engine.dispose()
 
     app = FastAPI(

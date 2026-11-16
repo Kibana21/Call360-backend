@@ -1,4 +1,8 @@
-"""Data Intake APIs for CP0.4a: API-080, API-082…085 (manual intake; mock upstream and corrections are CP0.4b).
+"""Data Intake APIs: API-080, API-082…085 (CP0.4a manual intake) and API-087 (CP0.4b reference data for the
+Manual Intake screen). Mock upstream and corrections remain deferred.
+
+- ``GET /intake/reference`` (API-087) lists the values the validator accepts, read from the same sources it uses
+  (synthetic product set, active FSCs, the active governed SBQ band and synthetic contact lists, request enums).
 
 - ``POST /intake/manual/preview`` (API-084) validates and plans one synthetic transaction and **persists nothing
   except an audit event**.
@@ -15,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import Any
+from typing import Any, get_args
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy import text
@@ -25,19 +29,42 @@ from app.api.admin_config import _write_guard
 from app.api.deps import csrf_protected
 from app.api.schemas import (
     ErrorResponse,
+    IntakeBandOption,
+    IntakeCallbackRequest,
+    IntakeContact,
+    IntakeContactFormat,
     IntakeCounts,
+    IntakeFscOption,
     IntakeItemOut,
     IntakeOutcome,
+    IntakeParty,
+    IntakePolicy,
+    IntakeProductOption,
+    IntakeReference,
     IntakeRunDetail,
     IntakeRunList,
     IntakeRunRow,
+    IntakeSale,
     IntakeSource,
     IntakeSourceList,
+    IntakeSourceRisk,
     IntakeTransaction,
+    PartyRole,
 )
 from app.audit.chain import write_audit
 from app.core.errors import AppError
-from app.domain.intake import INTAKE_LOCK_KEY, commit, describe, now_utc, payload_digest, plan
+from app.domain.intake import (
+    INTAKE_LOCK_KEY,
+    MARKET_CURRENCY,
+    RESERVED_SOURCE_SYSTEMS,
+    SYNTHETIC_PRODUCTS,
+    commit,
+    describe,
+    governed,
+    now_utc,
+    payload_digest,
+    plan,
+)
 from app.security.authz import AuthContext, get_db, request_meta, require
 from app.security.scope import not_found
 
@@ -100,10 +127,85 @@ def sources(request: Request, _auth: AuthContext = Depends(require("intake.read"
         data_policy=request.app.state.settings.data_policy,
         items=[
             IntakeSource(source_type="MANUAL", available=True, note="Manual synthetic transaction intake (API)"),
-            IntakeSource(source_type="MOCK_API", available=False, note="Mock upstream import arrives in CP0.4b"),
+            IntakeSource(source_type="MOCK_API", available=False, note="Mock upstream import is deferred (CP0.4b)"),
             IntakeSource(source_type="BULK", available=False, note="Not available in Stage 0 (S4)"),
             IntakeSource(source_type="INTERNAL_API", available=False, note="Not available in Stage 0 (S4+)"),
         ],
+    )
+
+
+def _choices(annotation: Any) -> list[str]:
+    """The string values of a ``Literal`` (optionally inside ``| None`` or ``list[...]``) request field."""
+    args = get_args(annotation)
+    if args and all(isinstance(a, str) for a in args):
+        return list(args)
+    return [v for a in args if a is not type(None) for v in _choices(a)]
+
+
+def _field(model: Any, name: str) -> list[str]:
+    return _choices(model.model_fields[name].annotation)
+
+
+def _bound(model: Any, name: str, kind: str) -> int:
+    return int(next(getattr(m, kind) for m in model.model_fields[name].metadata if hasattr(m, kind)))
+
+
+# Guidance shown beside the contact inputs; each example must match its governed pattern (tested).
+CONTACT_EXAMPLES = {"PHONE": "SYN-TEL-{market}-123456", "EMAIL": "example.name@example.invalid"}
+
+
+@router.get("/reference", response_model=IntakeReference, operation_id="intake_reference", responses=_ERR)
+def reference(
+    request: Request,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require("intake.read")),
+) -> IntakeReference:
+    """API-087: the values the manual-intake validator accepts for the caller's market (Stage 0: SG only)."""
+    markets = sorted(auth.markets & MARKET_CURRENCY.keys())
+    if not markets:
+        raise AppError(403, "MARKET_NOT_IN_SCOPE", "No intake market is in your scope")
+    market = markets[0]  # Stage 0 has one market (D-39)
+    bands = governed(db, "sbq_risk_band")
+    ranges = governed(db, "synthetic_contact_ranges")
+    fscs = db.execute(
+        text("SELECT fsc_ref, display_name, channel FROM fsc_representative WHERE status = 'ACTIVE' ORDER BY fsc_ref")
+    ).all()
+    return IntakeReference(
+        market_code=market,
+        currency=MARKET_CURRENCY[market],
+        data_policy=request.app.state.settings.data_policy,
+        source_system_prefix="SYN-",
+        reserved_source_systems=sorted(RESERVED_SOURCE_SYSTEMS),
+        products=[
+            IntakeProductOption(product_code=c, product_family=f, product_subtype=t)
+            for c, f, t in sorted(SYNTHETIC_PRODUCTS)
+        ],
+        fscs=[IntakeFscOption(fsc_ref=r.fsc_ref, display_name=r.display_name, channel=r.channel) for r in fscs],
+        risk_bands=[IntakeBandOption(code=c, label=bands.labels[c]) for c in bands.values],
+        risk_band_list_version=str(bands.version),
+        contact_formats=[
+            IntakeContactFormat(
+                channel=a["channel"],
+                code=code,
+                label=ranges.labels[code],
+                pattern=a["pattern"],
+                example=CONTACT_EXAMPLES.get(a["channel"], "").format(market=market),
+            )
+            for code, a in ranges.values.items()
+        ],
+        enums={
+            "policy_status": _field(IntakePolicy, "status"),
+            "premium_frequency": _field(IntakePolicy, "premium_frequency"),
+            "sale_event_type": _field(IntakeSale, "sale_event_type"),
+            "selling_channel": _field(IntakeSale, "selling_channel"),
+            "party_kind": _field(IntakeParty, "kind"),
+            "party_role": _choices(PartyRole),
+            "contact_channel": _field(IntakeContact, "channel"),
+            "consent_status": _field(IntakeContact, "consent_status"),
+            "risk_status": _field(IntakeSourceRisk, "status"),
+        },
+        priority_min=_bound(IntakeCallbackRequest, "priority", "ge"),
+        priority_max=_bound(IntakeCallbackRequest, "priority", "le"),
     )
 
 

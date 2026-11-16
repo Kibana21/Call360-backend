@@ -62,6 +62,7 @@ class MeResponse(BaseModel):
     markets: list[str]
     session: SessionInfo
     environment: EnvironmentInfo
+    password_change_required: bool = False  # CP0.1B-3: a one-time password must be replaced first
 
 
 class LoginResponse(BaseModel):
@@ -109,6 +110,150 @@ class AdminUserPatch(StrictModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+# ---- CP0.1B-3 Administration completion (API-007, 009, 011, 013, 014…020, 026) -------------------------------
+class SessionStatus(BaseModel):
+    session_id: uuid.UUID
+    created_at: datetime
+    last_seen_at: datetime
+    idle_expires_at: datetime
+    absolute_expires_at: datetime
+
+
+class PasswordChange(StrictModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+class AdminUserCreate(StrictModel):
+    username: str = Field(min_length=3, max_length=64)
+    display_name: str = Field(min_length=1, max_length=120)
+    group_code: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class Reason(StrictModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class OneTimePassword(BaseModel):
+    """Returned once to the administrator; never stored in plain text, logged or audited."""
+
+    user: AdminUser
+    one_time_password: str | None
+    replayed: bool = False
+    note: str
+
+
+class GroupMember(BaseModel):
+    principal_id: uuid.UUID
+    username: str | None
+    display_name: str
+    status: str
+    valid_from: datetime
+    valid_to: datetime | None
+    provenance: str
+    created_by: str
+
+
+class GroupRoleOut(BaseModel):
+    role: str
+    effective_from: datetime
+    effective_to: datetime | None
+    approved_by: str
+
+
+class GroupScopeOut(BaseModel):
+    market: str
+    effective_from: datetime
+    effective_to: datetime | None
+    created_by: str
+    change_reason: str
+
+
+class AdminGroup(BaseModel):
+    group_id: uuid.UUID
+    code: str
+    name: str
+    status: str
+    provider: str
+    member_count: int
+    roles: list[str]  # current role mappings
+    markets: list[str]  # current scope mappings
+    mappings_version: str  # If-Match value for API-018
+    members: list[GroupMember]  # current members
+    former_members: list[GroupMember]
+    role_history: list[GroupRoleOut]
+    scope_history: list[GroupScopeOut]
+
+
+class AdminGroupList(BaseModel):
+    items: list[AdminGroup]
+    enabled_markets: list[str]
+
+
+class GroupMappingsUpdate(StrictModel):
+    roles: list[str] = Field(max_length=10)
+    markets: list[str] = Field(max_length=10)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class RolePermissionOut(BaseModel):
+    code: str
+    alias: str | None
+    reserved: bool
+    description: str
+
+
+class AdminRole(BaseModel):
+    code: str
+    name: str
+    permissions: list[RolePermissionOut]
+
+
+class AdminRoleList(BaseModel):
+    items: list[AdminRole]
+    reserved_permissions: list[RolePermissionOut]
+
+
+class AdminSessionOut(BaseModel):
+    session_id: uuid.UUID
+    principal_id: uuid.UUID
+    username: str | None
+    display_name: str
+    created_at: datetime
+    last_seen_at: datetime
+    idle_expires_at: datetime
+    absolute_expires_at: datetime
+    ip: str | None
+    current: bool
+
+
+class AdminSessionList(BaseModel):
+    items: list[AdminSessionOut]
+
+
+class HealthCheck(BaseModel):
+    code: str
+    label: str
+    status: Literal["OK", "WARN", "FAIL", "NOT_AVAILABLE"]
+    detail: str
+
+
+class SystemHealth(BaseModel):
+    checked_at: datetime
+    app_env: str
+    data_policy: str
+    current_stage: str
+    migration_head: str | None
+    expected_migration_head: str
+    enabled_markets: list[str]
+    openapi_sha256: str
+    audit_chain_head: str | None
+    audit_events: int
+    checks: list[HealthCheck]
+    counts: dict[str, int]
+
+
 class AuditEventOut(BaseModel):
     event_id: uuid.UUID
     seq: int
@@ -128,6 +273,7 @@ class AuditEventOut(BaseModel):
     reason: str | None
     before: dict[str, Any] | None
     after: dict[str, Any] | None
+    scope_redacted: bool = False  # CP0.6-F1: out-of-scope record ID or dataset-wide totals withheld
 
 
 class AuditEventList(BaseModel):
@@ -565,6 +711,7 @@ class FactSnapshotOut(BaseModel):
 
 class ScriptPin(BaseModel):
     script_version_id: uuid.UUID
+    script_family_id: uuid.UUID
     family: str
     version_label: str
     status: str
@@ -807,6 +954,7 @@ class ScriptSectionOut(BaseModel):
 
 class ScriptVersionDetail(BaseModel):
     id: uuid.UUID
+    script_family_id: uuid.UUID
     family: str
     family_name: str
     market: str
@@ -816,12 +964,299 @@ class ScriptVersionDetail(BaseModel):
     language: str
     effective_from: datetime | None
     effective_to: datetime | None
-    manifest_sha256: str
+    manifest_sha256: str | None  # a draft has no frozen manifest yet
     author_ref: str | None
     reviewer_ref: str | None
     published_at: datetime | None
     content_approval_status: str
     sections: list[ScriptSectionOut]
+
+
+# ---- F6: Script Studio and Assignment Rules (API-060…062, API-064…066; read-only) ------------------------------
+class ScriptModuleSummary(BaseModel):
+    position: int
+    module_code: str
+    module_name: str
+    module_kind: str
+    module_revision: int
+    inclusion_condition: Any
+    questions: int
+
+
+class ScriptVersionSummary(BaseModel):
+    id: uuid.UUID
+    script_family_id: uuid.UUID
+    family: str
+    family_name: str
+    market: str
+    purpose: str
+    version_label: str
+    status: str
+    validation_status: str | None
+    language: str
+    effective_from: datetime | None
+    effective_to: datetime | None
+    published_at: datetime | None
+    manifest_sha256: str | None  # a draft has no frozen manifest yet
+    content_approval_status: str
+    author_ref: str | None
+    reviewer_ref: str | None
+    supersedes_id: uuid.UUID | None
+    supersedes_label: str | None
+    modules: list[ScriptModuleSummary]
+    questions: int
+    mandatory_questions: int
+    cases_assigned: int
+    rules_targeting: list[str]
+
+
+class ScriptLibrary(BaseModel):
+    items: list[ScriptVersionSummary]
+    total: int
+    facets: dict[str, dict[str, int]]
+    markets: list[str]
+
+
+class ScriptFamilyDetail(BaseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    market: str
+    purpose: str
+    description: str | None
+    versions: list[ScriptVersionSummary]
+
+
+class ScriptVersionList(BaseModel):
+    script_family_id: uuid.UUID
+    family: str
+    items: list[ScriptVersionSummary]
+
+
+class RuleCaseRef(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    assigned_at: datetime
+
+
+class AssignmentRuleOut(BaseModel):
+    id: uuid.UUID
+    rule_code: str
+    version: int
+    status: str
+    predicate: Any
+    priority: int
+    specificity: int
+    effective_from: datetime | None
+    effective_to: datetime | None
+    checksum: str | None
+    author_ref: str | None
+    checker_ref: str | None
+    market: str
+    target: ScriptPin
+    target_family_id: uuid.UUID
+    cases_assigned: int
+    recent_cases: list[RuleCaseRef]
+
+
+class AssignmentRuleList(BaseModel):
+    items: list[AssignmentRuleOut]
+    total: int
+
+
+class RegulatoryReferenceOut(BaseModel):
+    id: uuid.UUID
+    issuer: str
+    jurisdiction: str
+    market: str | None
+    title: str
+    document_version: str | None
+    url: str | None
+    published_on: Date | None
+    interpretation_status: str
+    controls: list[str]
+
+
+class RegulatoryReferenceList(BaseModel):
+    items: list[RegulatoryReferenceOut]
+
+
+class ControlQuestionLink(BaseModel):
+    question_code: str
+    intent: str | None
+    rationale: str | None
+    mapping_status: str
+    regulatory_reference_id: uuid.UUID | None
+    regulatory_reference_title: str | None
+    script_versions: list[str]  # "FAMILY vLABEL" of in-scope versions that include the question
+
+
+class ControlOut(BaseModel):
+    id: uuid.UUID
+    control_code: str
+    name: str
+    owner_role: str | None
+    content_approval_status: str
+    questions: list[ControlQuestionLink]
+
+
+class ControlList(BaseModel):
+    items: list[ControlOut]
+
+
+# ---- F7: Review Workbench (API-077) and Voice Studio preflight (API-078); read-only ---------------------------
+class ReviewEvidence(BaseModel):
+    """What the finding points at, as recorded. Absent media is stated, never implied."""
+
+    question_code: str | None
+    question_wording: str | None
+    controls: list[str]
+    answer_state: str | None
+    typed_value: Any
+    verbatim_redacted: str | None
+    rule_ref: str | None
+    rule_version: str | None
+    rule_expected: Any
+    rule_observed: Any
+    rule_result: str | None
+    transcript: str
+    recording: str
+    label: str | None
+
+
+class ReviewItem(BaseModel):
+    id: uuid.UUID
+    finding_ref: str
+    category: str
+    severity: str  # compliance finding severity: not SBQ selection risk, not investment suitability
+    material: bool
+    status: str
+    origin: str
+    record_origin: str
+    raised_at: datetime
+    review_assigned_at: datetime | None
+    review_closed_at: datetime | None
+    reviewer_assigned: bool
+    case_id: uuid.UUID
+    case_ref: str
+    case_state: str
+    policy_id: uuid.UUID
+    policy_ref: str
+    sale_event_id: uuid.UUID
+    sale_ref: str
+    selection_risk_band: str  # the case's effective SBQ callback-selection band (context only)
+    evidence: ReviewEvidence
+
+
+class ReviewQueue(BaseModel):
+    items: list[ReviewItem]
+    total: int
+    limit: int
+    offset: int
+    facets: dict[str, dict[str, int]]
+    material_severities: list[str]
+    markets: list[str]
+
+
+class VoiceCapability(BaseModel):
+    code: str
+    label: str
+    status: Literal["AVAILABLE", "NOT_AVAILABLE", "DISABLED", "NOT_PERFORMED", "NOT_EVALUATED"]
+    reason: str
+    stage: str
+
+
+class VoiceCaseOption(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    state: str
+
+
+class VoicePreflight(BaseModel):
+    status: Literal["AVAILABLE", "NOT_AVAILABLE"]
+    reason: str
+    stage: str
+    provider: str | None
+    capabilities: list[VoiceCapability]
+    data_policy: str
+    test_message: list[str]
+    callable_cases: list[VoiceCaseOption]  # a few callable Singapore cases, for starting a test session
+
+
+class VoiceSessionCreate(StrictModel):
+    case_id: uuid.UUID
+
+
+class VoiceContact(BaseModel):
+    party_ref: str
+    masked_name: str
+    role: str
+    channel: str | None
+    masked_contact: str | None
+
+
+class VoiceSessionOut(BaseModel):
+    """A short-lived, case-bound test session (S1-A; persisted from S1-B). ``session_id`` is the persisted browser
+    contact attempt. The credential is single-use and expires quickly; it is sent as the first WebSocket message,
+    never in a URL."""
+
+    session_id: uuid.UUID
+    attempt_ref: str
+    resumed: bool = False
+    credential: str
+    credential_expires_at: datetime
+    stream_path: str
+    case_id: uuid.UUID
+    case_ref: str
+    provider: str
+    script: ScriptPin
+    contact: VoiceContact
+    identity_verification: Literal["NOT_PERFORMED"] = "NOT_PERFORMED"
+    compliance_outcome: Literal["NOT_EVALUATED"] = "NOT_EVALUATED"
+    recording: Literal["DISABLED"] = "DISABLED"
+    transcript: Literal["NOT_AVAILABLE"] = "NOT_AVAILABLE"
+    test_message: list[str]
+    sample_rate: int
+    frame_ms: int
+    max_duration_s: int
+
+
+class VoiceSessionEvent(BaseModel):
+    seq: int
+    event_type: str
+    source: str
+    occurred_at: datetime
+    client_seq: int | None
+    out_of_order: bool
+    details: dict[str, Any]  # metadata only: never audio, transcript text or microphone content
+
+
+class VoiceSessionStatus(BaseModel):
+    session_id: uuid.UUID  # the browser contact attempt
+    attempt_ref: str
+    session_ref: str | None
+    case_id: uuid.UUID
+    case_ref: str
+    status: Literal[
+        "PENDING_CONNECTION", "NOT_CONNECTED", "CREATED", "INTERRUPTED", "FINALIZING", "FINALIZED", "ABORTED"
+    ]
+    started_at: datetime | None
+    ended_at: datetime | None
+    end_reason: str | None
+    responses: int
+    interruptions: int
+    events_total: int
+    started_by: str
+    yours: bool
+    can_resume: bool
+    identity_verification: Literal["NOT_PERFORMED"] = "NOT_PERFORMED"
+    compliance_outcome: Literal["NOT_EVALUATED"] = "NOT_EVALUATED"
+    recording: Literal["DISABLED"] = "DISABLED"
+    events: list[VoiceSessionEvent] = Field(default_factory=list)
+
+
+class VoiceSessionList(BaseModel):
+    items: list[VoiceSessionStatus]
 
 
 # ---- F4: Policy Explorer and Policy Detail (API-050…055) --------------------------------------------------------
@@ -1373,3 +1808,47 @@ class IntakeItemOut(BaseModel):
 class IntakeRunDetail(IntakeRunRow):
     items: list[IntakeItemOut]
     result: dict[str, Any]
+
+
+# ---- CP0.4b reference data for the Manual Intake screen (API-087) --------------------------------------------
+class IntakeProductOption(BaseModel):
+    product_code: str
+    product_family: str
+    product_subtype: str
+
+
+class IntakeFscOption(BaseModel):
+    fsc_ref: str
+    display_name: str
+    channel: str
+
+
+class IntakeBandOption(BaseModel):
+    code: str
+    label: str
+
+
+class IntakeContactFormat(BaseModel):
+    channel: str
+    code: str
+    label: str
+    pattern: str
+    example: str
+
+
+class IntakeReference(BaseModel):
+    """Values the intake API accepts, read from the same sources the validator uses (no new rules)."""
+
+    market_code: str
+    currency: str
+    data_policy: str
+    source_system_prefix: str
+    reserved_source_systems: list[str]
+    products: list[IntakeProductOption]
+    fscs: list[IntakeFscOption]
+    risk_bands: list[IntakeBandOption]
+    risk_band_list_version: str
+    contact_formats: list[IntakeContactFormat]
+    enums: dict[str, list[str]]
+    priority_min: int
+    priority_max: int

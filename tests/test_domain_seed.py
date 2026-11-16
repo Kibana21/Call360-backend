@@ -326,7 +326,7 @@ def test_be_data_11_factor_values_reproduce_input_hash(conn: Connection) -> None
     assert len(pairs) == 25
 
 
-def test_be_data_12_expected_answer_policies_and_yes_is_not_auto_compliant(conn: Connection) -> None:
+def test_be_kpi_05_be_data_12_expected_answer_policies_and_yes_is_not_auto_compliant(conn: Connection) -> None:
     policies = {r[0] for r in q(conn, "SELECT DISTINCT expected_answer_policy FROM §question_revision")}
     assert policies == {
         "EXACT_BOOLEAN",

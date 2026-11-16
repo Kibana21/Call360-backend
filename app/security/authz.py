@@ -8,9 +8,10 @@ membership changes take effect on the next request.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import Depends, Request
 from sqlalchemy import and_, or_, select
@@ -24,6 +25,7 @@ from app.security.models import (
     GroupMembership,
     GroupRoleMapping,
     IdentityBinding,
+    LocalCredential,
     Permission,
     Principal,
     Role,
@@ -45,6 +47,8 @@ class AuthContext:
     session: AuthSession
     # Effective market scope (CP0.1B-2, D-39): mapped markets ∩ enabled markets ({SG}). Empty = no business data.
     markets: frozenset[str] = field(default_factory=frozenset)
+    # CP0.1B-3: a one-time password set by an administrator must be changed before any permissioned action.
+    password_change_required: bool = False
 
     @property
     def actor(self) -> Actor:
@@ -88,8 +92,13 @@ def session_is_active(s: AuthSession | None, now: datetime) -> bool:
 
 
 def authenticate(request: Request, db: Session = Depends(get_db)) -> AuthContext:
-    tokens: TokenService = request.app.state.tokens
-    token = request.cookies.get(request.app.state.cookies.access)
+    return resolve_auth(request.app, request.cookies, db)
+
+
+def resolve_auth(app: Any, cookies: Mapping[str, str], db: Session) -> AuthContext:
+    """The shared per-request check (HTTP and the S1-A voice WebSocket): token, server session, grants, markets."""
+    tokens: TokenService = app.state.tokens
+    token = cookies.get(app.state.cookies.access)
     if not token:
         raise AppError(401, "AUTH_REQUIRED", "Authentication required")
     try:
@@ -108,8 +117,22 @@ def authenticate(request: Request, db: Session = Depends(get_db)) -> AuthContext
     username = db.execute(select(IdentityBinding.username).where(IdentityBinding.principal_id == principal.id)).scalar()
     roles, perms = resolve_grants(db, principal.id, now)
     markets = resolve_markets(db, principal.id, now)
+    must_change = bool(
+        db.execute(
+            select(LocalCredential.must_change_password).where(LocalCredential.principal_id == principal.id)
+        ).scalar()
+    )
     return AuthContext(
-        principal.id, principal.display_name, username, session.id, roles, perms, claims.expires_at, session, markets
+        principal.id,
+        principal.display_name,
+        username,
+        session.id,
+        roles,
+        perms,
+        claims.expires_at,
+        session,
+        markets,
+        must_change,
     )
 
 
@@ -117,6 +140,8 @@ def require(permission: str) -> Callable[..., AuthContext]:
     """Route dependency: authenticated principal holding ``permission`` (403 + audit otherwise)."""
 
     def dependency(request: Request, auth: AuthContext = Depends(authenticate)) -> AuthContext:
+        if auth.password_change_required:
+            raise AppError(403, "PASSWORD_CHANGE_REQUIRED", "Set your own password before continuing")
         if permission not in auth.permissions:
             with request.app.state.session_factory() as db, db.begin():
                 write_audit(

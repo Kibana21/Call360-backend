@@ -69,7 +69,7 @@ def test_be_auth_03_ip_throttle(client: TestClient, user: Account) -> None:
 
 
 # ---- BE-AUTH-05 / 10 -------------------------------------------------------------------------
-def test_be_auth_05_refresh_rotates_and_reuse_revokes(
+def test_be_auth_05_be_auth_10_refresh_rotates_and_reuse_revokes(
     client: TestClient, other_client: TestClient, user: Account
 ) -> None:
     login(client, user)

@@ -246,6 +246,7 @@ def golden(conn: Connection) -> dict[str, str]:
 
 
 def test_be_srch_01_02_06_each_type_findable_ranked_with_typed_routes(signed_in: TestClient, conn: Connection) -> None:
+    """BE-SRCH-01, BE-SRCH-02 (exact > prefix > fuzzy with matched field), BE-SRCH-06 (typed routes)."""
     g = golden(conn)
     for etype, ref in g.items():
         body = signed_in.get("/api/v1/search", params={"q": ref.lower()}).json()

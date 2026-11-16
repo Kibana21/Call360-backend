@@ -98,8 +98,37 @@ def test_be_sec_01_exact_api_surface(app) -> None:  # type: ignore[no-untyped-de
         ("GET", "/api/v1/risk-assessments"),
         ("GET", "/api/v1/risk-assessments/{assessment_id}"),
         ("GET", "/api/v1/risk-factors"),
+        # F6 Script Studio and Assignment Rules (API-060…062, API-064…066)
+        ("GET", "/api/v1/scripts"),
+        ("GET", "/api/v1/scripts/{script_family_id}"),
+        ("GET", "/api/v1/scripts/{script_family_id}/versions"),
+        ("GET", "/api/v1/script-assignment-rules"),
+        ("GET", "/api/v1/regulatory-references"),
+        ("GET", "/api/v1/controls"),
+        # CP0.1B-3 Administration completion (API-007, 009, 011, 013, 014…020, 026)
+        ("GET", "/api/v1/auth/session"),
+        ("POST", "/api/v1/me/password"),
+        ("POST", "/api/v1/admin/users"),
+        ("POST", "/api/v1/admin/users/{principal_id}/password-reset"),
+        ("GET", "/api/v1/admin/groups"),
+        ("PUT", "/api/v1/admin/groups/{group_id}/members/{principal_id}"),
+        ("DELETE", "/api/v1/admin/groups/{group_id}/members/{principal_id}"),
+        ("GET", "/api/v1/admin/roles"),
+        ("PUT", "/api/v1/admin/groups/{group_id}/mappings"),
+        ("GET", "/api/v1/admin/sessions"),
+        ("POST", "/api/v1/admin/sessions/{session_id}/revoke"),
+        ("GET", "/api/v1/admin/system-health"),
+        # F7 Review Workbench and Voice Studio (API-077, API-078)
+        ("GET", "/api/v1/review-queue"),
+        ("GET", "/api/v1/voice/preflight"),
+        ("POST", "/api/v1/voice/sessions"),  # S1-A
+        ("GET", "/api/v1/voice/sessions"),  # S1-B
+        ("GET", "/api/v1/voice/sessions/{session_id}"),
+        ("POST", "/api/v1/voice/sessions/{session_id}/resume"),
+        ("POST", "/api/v1/voice/sessions/{session_id}/stop"),
         # CP0.4a manual intake (API-080, API-082…085)
         ("GET", "/api/v1/intake/sources"),
+        ("GET", "/api/v1/intake/reference"),  # API-087 (CP0.4b)
         ("POST", "/api/v1/intake/manual/preview"),
         ("POST", "/api/v1/intake/manual"),
         ("GET", "/api/v1/intake/import-runs"),

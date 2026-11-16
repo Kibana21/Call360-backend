@@ -104,13 +104,15 @@ def _case(db: Session, request: Request, auth: AuthContext, case_id: uuid.UUID) 
 def _pin(db: Session, version_id: uuid.UUID) -> ScriptPin:
     r = _one(
         db,
-        "SELECT v.id, f.code, v.version_label, v.status, v.manifest_sha256, v.content_approval_status "
+        "SELECT v.id, v.script_family_id, f.code, v.version_label, v.status, v.manifest_sha256, "
+        "v.content_approval_status "
         "FROM script_version v JOIN script_family f ON f.id = v.script_family_id WHERE v.id = :i",
         i=version_id,
     )
     assert r is not None
     return ScriptPin(
         script_version_id=r["id"],
+        script_family_id=r["script_family_id"],
         family=r["code"],
         version_label=r["version_label"],
         status=r["status"],
@@ -168,6 +170,17 @@ def _snapshot(row: dict[str, Any]) -> FactSnapshotOut:
     return FactSnapshotOut(**{k: row[k] for k in FactSnapshotOut.model_fields})
 
 
+def call_blockers(holds: list[HoldOut], has_eligible_contact: bool, state: str) -> list[str]:
+    """The Call Detail pre-check (F3), shared with the S1-A voice session: active blocking holds, no eligible
+    contact, or a terminal case state. An empty list means the case may be called."""
+    blockers = [f"HOLD:{h.hold_reason}" for h in holds if h.active and h.is_blocking]
+    if not has_eligible_contact:
+        blockers.append("NO_ELIGIBLE_CONTACT")
+    if state in TERMINAL_STATES:
+        blockers.append(f"CASE_{state}")
+    return blockers
+
+
 def _holds(db: Session, case_id: uuid.UUID) -> list[HoldOut]:
     return [
         HoldOut(**{k: r[k] for k in HoldOut.model_fields if k != "active"}, active=r["released_at"] is None)
@@ -223,11 +236,7 @@ def case_detail(
             {"c": case_id},
         ).mappings()
     ]
-    blockers = [f"HOLD:{h.hold_reason}" for h in holds if h.active and h.is_blocking]
-    if not any(s.eligible for s in selection):
-        blockers.append("NO_ELIGIBLE_CONTACT")
-    if c["state"] in TERMINAL_STATES:
-        blockers.append(f"CASE_{c['state']}")
+    blockers = call_blockers(holds, any(s.eligible for s in selection), c["state"])
     pol = _one(db, "SELECT * FROM policy WHERE id = :p AND market_code = ANY(:m)", p=c["policy_id"], m=markets)
     sale = _one(
         db,
@@ -713,8 +722,9 @@ def script_version_detail(
             "SELECT cm.question_bank_item_id, ct.control_code, ct.name, ct.owner_role, cm.rationale, cm.status, "
             "rr.issuer, rr.title, rr.document_version, rr.interpretation_status FROM control_mapping cm "
             "JOIN control ct ON ct.id = cm.control_id LEFT JOIN regulatory_reference rr "
-            "ON rr.id = cm.regulatory_reference_id ORDER BY ct.control_code"
-        )
+            "ON rr.id = cm.regulatory_reference_id AND rr.market_code = ANY(:m) ORDER BY ct.control_code"
+        ),
+        {"m": sorted(auth.markets)},  # F6: regulatory references only from the caller's markets (D-39)
     ).mappings():
         controls.setdefault(cm["question_bank_item_id"], []).append(
             {k: cm[k] for k in cm.keys() if k != "question_bank_item_id"}
