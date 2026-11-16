@@ -65,6 +65,7 @@ class Facts:
     material: set[str]
     materiality_version: int | None
     bands: list[tuple[str, str, dict[str, Any]]]  # active sbq_risk_band (code, label, attributes)
+    intake_runs: list[dict[str, Any]] = field(default_factory=list)  # KPI-14 (CP0.4a)
 
     def due_in(self, start: datetime, end: datetime) -> list[Case]:
         return [c for c in self.cases.values() if start <= c.due_at < end]
@@ -176,7 +177,16 @@ def load_facts(conn: Connection, schema: str, markets: Sequence[str], now: datet
     mat_version, mat_values = active.get("finding_materiality_policy", (None, []))
     material = {v["code"] for v in mat_values if v["attributes"].get("material")}
     bands = [(v["code"], v["label"], v["attributes"]) for v in active.get("sbq_risk_band", (None, []))[1]]
-    return Facts(list(markets), now, cases, attempts, runs, findings, eligible, material, mat_version, bands)
+    intake_runs = [
+        dict(r._mapping)
+        for r in q(
+            "SELECT id, status, started_at, received_count, new_count, updated_count, rejected_count "
+            "FROM intake_run WHERE market_code = ANY(:m)"
+        )
+    ]
+    return Facts(
+        list(markets), now, cases, attempts, runs, findings, eligible, material, mat_version, bands, intake_runs
+    )
 
 
 # ---- helpers -----------------------------------------------------------------------------------------------
@@ -514,9 +524,24 @@ def compute_kpis(f: Facts, start: date, end: date, permissions: frozenset[str]) 
         )
     )
     if "intake.read" in permissions:
+        started = [r for r in f.intake_runs if s <= r["started_at"] < e]
         out.append(
-            _not_measured(
-                ctx, "KPI-14", "Intake runs", "intake run", "Intake runs are recorded from Data Intake (CP0.4)"
+            ctx.base(
+                "KPI-14",
+                "Intake runs",
+                "intake run",
+                "intake_run.started_at ∈ range",
+                unit="count",
+                numerator=len(started),
+                value=float(len(started)),
+                dedup_rule="COUNT(DISTINCT intake_run.id)",
+                eligibility_rule="Intake runs started in range (manual intake in CP0.4a)",
+                breakdown={
+                    "by_status": dict(Counter(r["status"] for r in started)),
+                    "totals": {
+                        k: sum(r[f"{k}_count"] for r in started) for k in ("received", "new", "updated", "rejected")
+                    },
+                },
             )
         )
     cats = Counter(c.category for c in due)

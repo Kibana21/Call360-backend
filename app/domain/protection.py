@@ -126,5 +126,13 @@ def mask_name(name: str) -> str:
     return f"{parts[0]} {parts[1][:1]}. {' '.join(parts[2:])}"
 
 
+def mask_name_strict(name: str) -> str:
+    """Intake masking (CP0.4a): every word becomes its initial; only purely numeric tokens (synthetic
+    discriminators) are kept. ``Example Demo Policyholder 937467`` -> ``E••• D••• P••• 937467``. The seed keeps
+    ``mask_name`` so its recorded digest is unchanged."""
+    words = name.split()
+    return " ".join(w if w.isdigit() else f"{w[:1]}•••" for w in words) or "•••"
+
+
 def matches_any(value: str, patterns: list[str]) -> bool:
     return any(re.fullmatch(p, value) for p in patterns)

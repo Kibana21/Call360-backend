@@ -5,9 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import date as Date
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 class StrictModel(BaseModel):
@@ -1028,3 +1029,347 @@ class PolicyHistory(BaseModel):
     policy_ref: str
     lineage: list[LineageItem]
     field_changes: FieldChangeAvailability
+
+
+# ---- F5: SBQ Risk Workbench (API-056…058) ----------------------------------------------------------------------
+class CaseLink(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    route: str
+
+
+class RiskRow(BaseModel):
+    id: uuid.UUID
+    sale_event_id: uuid.UUID
+    sale_ref: str
+    sale_event_type: str
+    sold_at: datetime
+    policy_id: uuid.UUID
+    policy_ref: str
+    product_family: str
+    is_ilp: bool
+    channel: str | None
+    fsc_ref: str | None
+    origin: str  # SOURCE_ASSIGNED | RULE_ASSESSED | MANUAL
+    status: str  # FINAL | SUPERSEDED | other stored statuses
+    band_code: str | None  # SBQ callback-selection band; never a finding severity or a suitability fact
+    score: float | None  # only when stored (C-17)
+    reason_codes: list[str]
+    source_original_value: str | None
+    rule_set: str | None
+    assessed_at: datetime | None
+    valid_at: datetime
+    input_snapshot_sha256: str | None
+    matched_factors: list[str]
+    effective: bool  # latest FINAL assessment of the sale
+    supersedes_id: uuid.UUID | None
+    superseded_by: uuid.UUID | None
+    discrepancy: bool  # the sale's latest FINAL source-assigned and rule-assessed bands differ
+    cases: list[CaseLink]
+    is_synthetic: bool
+    route: str  # Risk Workbench drawer
+
+
+class RiskPopulationAssessments(BaseModel):
+    total: int
+    by_origin: dict[str, int]
+    by_status: dict[str, int]
+    by_band: dict[str, int]
+    superseded: int
+
+
+class RiskPopulationSales(BaseModel):
+    total: int
+    by_effective_band: dict[str, int]
+    without_assessment: int
+    without_final_assessment: int
+    source_rule_discrepancies: int
+
+
+class RiskSummary(BaseModel):
+    assessments: RiskPopulationAssessments  # grain: one stored assessment
+    sales: RiskPopulationSales  # grain: one sale event (its effective assessment)
+
+
+class RiskList(BaseModel):
+    items: list[RiskRow]
+    total: int
+    page: PageInfo
+    facets: dict[str, dict[str, int]]
+    summary: RiskSummary  # whole Singapore population, independent of the filters
+    markets: list[str]
+    data_as_of: datetime
+    synthetic_badge: bool
+
+
+class RiskFactorDetail(BaseModel):
+    factor_code: str | None
+    label: str | None
+    value_type: str
+    value: Any
+    source: str
+    matched_rule_id: str | None
+    weight: float | None
+    result: str
+
+
+class RuleSetOut(BaseModel):
+    code: str
+    version: int
+    status: str
+    effective_from: datetime
+    effective_to: datetime | None
+    checksum: str
+    content_approval_status: str
+
+
+class RiskComparison(BaseModel):
+    source_band: str | None
+    rule_band: str | None
+    effective_band: str | None
+    effective_id: uuid.UUID | None
+    discrepancy: bool
+
+
+class RiskAssessmentDetail(RiskRow):
+    kind: str
+    explanation: str | None
+    factors: list[RiskFactorDetail]
+    rule_set_version: RuleSetOut | None
+    provenance: Provenance
+    history: list[RiskRow]  # every stored assessment of the same sale, oldest first
+    comparison: RiskComparison
+
+
+class FactorVocabularyItem(BaseModel):
+    code: str
+    label: str
+    attributes: dict[str, Any]
+
+
+class RiskFactorVocabulary(BaseModel):
+    list_code: str
+    version: int
+    status: str
+    items: list[FactorVocabularyItem]
+    bands: list[FactorVocabularyItem]
+
+
+# ---- CP0.4a manual intake (API-080, API-082…085) ----------------------------------------------------------------
+PartyRole = Literal["OWNER", "INSURED", "PAYER", "PROPOSER", "BENEFICIARY", "AUTHORIZED_CONTACT"]
+SellingChannel = Literal["AGENCY", "BANCASSURANCE", "BROKER", "DIRECT"]
+
+
+class IntakeContact(StrictModel):
+    channel: Literal["PHONE", "EMAIL"]
+    value: str = Field(min_length=3, max_length=120, description="Synthetic identifier only (synthetic_contact_ranges)")
+    consent_status: Literal["GRANTED", "WITHDRAWN", "UNKNOWN"]
+    suppressed: bool = False
+    preference_rank: int = Field(1, ge=1, le=9)
+    is_verified: bool = False
+    language: str = Field("en", pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
+
+
+class IntakeAuthorization(StrictModel):
+    reference: str = Field(min_length=1, max_length=80)
+    valid_from: AwareDatetime
+    valid_to: AwareDatetime | None = None
+
+
+class IntakeParty(StrictModel):
+    """Either an existing synthetic party (``party_ref``) or a new one (``kind`` + ``name``). Parties are never
+    matched on name or contact value."""
+
+    party_ref: str | None = Field(None, pattern=r"^PTY-[0-9]{6}$")
+    source_party_id: str | None = Field(None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9:._-]*$")
+    kind: Literal["PERSON", "ORGANIZATION"] | None = None
+    name: str | None = Field(None, min_length=1, max_length=120)
+    date_of_birth_year: int | None = Field(None, ge=1900, le=2100)
+    roles: list[PartyRole] = Field(min_length=1, max_length=6)
+    authorization: IntakeAuthorization | None = None
+    contacts: list[IntakeContact] = Field(default_factory=list, max_length=6)
+
+
+class IntakePolicy(StrictModel):
+    policy_ref: str = Field(pattern=r"^POL-[A-Z]{2}-[0-9]{6}$")
+    market_code: str = Field(pattern=r"^[A-Z]{2}$")
+    product_code: str = Field(min_length=1, max_length=40)
+    product_family: str = Field(min_length=1, max_length=40)
+    product_subtype: str = Field(min_length=1, max_length=40)
+    status: Literal["PROPOSAL", "IN_FORCE", "FREE_LOOK_CANCELLED", "LAPSED", "TERMINATED"]
+    premium_amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    premium_frequency: Literal["SINGLE", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUAL"]
+    premium_term_years: int | None = Field(None, ge=1, le=99)
+    sum_assured: Decimal | None = Field(None, gt=0, max_digits=16, decimal_places=2)
+    sum_assured_currency: str | None = Field(None, pattern=r"^[A-Z]{3}$")
+    effective_from: AwareDatetime
+
+
+class IntakeSale(StrictModel):
+    sale_ref: str = Field(pattern=r"^SALE-[A-Z]{2}-[0-9]{6}$")
+    sale_event_type: Literal["NEW_BUSINESS", "REPLACEMENT", "TOP_UP", "OTHER_APPROVED"]
+    sold_at: AwareDatetime
+    fsc_ref: str = Field(pattern=r"^FSC-[0-9]{4}$")
+    selling_channel: SellingChannel
+    selling_location: str = Field(min_length=1, max_length=80)
+    campaign_code: str | None = Field(None, min_length=1, max_length=40)
+    proposal_ref: str = Field(min_length=1, max_length=40)
+    premium_amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    premium_amount_band: str | None = Field(None, pattern=r"^[A-Z0-9_]{1,40}$", description="Source-supplied label")
+
+
+class IntakeSourceRisk(StrictModel):
+    """SBQ callback-selection risk exactly as the source assigned it. Call360 calculates no band or score."""
+
+    band_code: str = Field(min_length=1, max_length=40)
+    source_original_value: str = Field(min_length=1, max_length=80)
+    status: Literal["PROVISIONAL", "FINAL"]
+    assessed_at: AwareDatetime
+    reason_codes: list[str] = Field(default_factory=list, max_length=10)
+
+
+class IntakeCallbackRequest(StrictModel):
+    """The verification obligation as the source requested it: due date and priority are source-provided."""
+
+    source_request_ref: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9:._-]*$")
+    due_at: AwareDatetime
+    priority: int = Field(ge=1, le=5)
+
+
+class IntakeTransaction(StrictModel):
+    is_synthetic: bool
+    source_system: str = Field(pattern=r"^[A-Z0-9][A-Z0-9-]{1,79}$")
+    source_event_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9:._-]*$")
+    source_observed_at: AwareDatetime | None = None
+    reason: str = Field(min_length=3, max_length=500)
+    policy: IntakePolicy
+    sale: IntakeSale
+    parties: list[IntakeParty] = Field(default_factory=list, max_length=10)
+    source_risk: IntakeSourceRisk | None = None
+    callback_request: IntakeCallbackRequest
+
+
+class IntakePolicyOut(BaseModel):
+    outcome: Literal["NEW", "REUSED"]
+    policy_ref: str
+    policy_id: uuid.UUID | None
+
+
+class IntakePartyOut(BaseModel):
+    outcome: Literal["NEW", "EXISTING"]
+    party_ref: str | None
+    party_id: uuid.UUID | None
+    masked_name: str
+    roles: list[str]
+    contacts: list[str]  # masked values only
+
+
+class IntakeEligibilityOut(BaseModel):
+    party_ref: str | None
+    masked_name: str
+    role: str
+    eligible: bool
+    ineligibility_reason: str | None
+    contact_masked: str | None
+
+
+class IntakeHoldOut(BaseModel):
+    reason: str
+    label: str
+    blocking: bool
+
+
+class IntakeRiskOut(BaseModel):
+    origin: Literal["SOURCE_ASSIGNED"]
+    band_code: str
+    status: str
+    source_original_value: str
+    assessment_id: uuid.UUID | None
+
+
+class IntakeCaseOut(BaseModel):
+    case_id: uuid.UUID | None
+    case_ref: str | None
+    state: str
+    obligation_type: str
+    source_request_ref: str
+    due_at: datetime
+    priority: int
+    callable: bool
+
+
+class IntakeOutcome(BaseModel):
+    mode: Literal["PREVIEW", "COMMITTED"]
+    replayed: bool = False
+    run_id: uuid.UUID | None = None
+    run_ref: str | None = None
+    payload_digest: str
+    source_system: str
+    source_event_id: str
+    policy: IntakePolicyOut
+    sale_ref: str
+    sale_event_id: uuid.UUID | None
+    parties: list[IntakePartyOut]
+    eligibility: list[IntakeEligibilityOut]
+    risk: IntakeRiskOut | None
+    risk_note: str | None
+    case: IntakeCaseOut
+    holds: list[IntakeHoldOut]
+    script_routing: Literal["NOT_EVALUATED_IN_S0"] = "NOT_EVALUATED_IN_S0"
+    compliance_outcome: Literal["NOT_EVALUATED_IN_S0"] = "NOT_EVALUATED_IN_S0"
+    routes: dict[str, str] = Field(default_factory=dict)
+
+
+class IntakeSource(BaseModel):
+    source_type: Literal["MANUAL", "MOCK_API", "BULK", "INTERNAL_API"]
+    available: bool
+    note: str
+
+
+class IntakeSourceList(BaseModel):
+    items: list[IntakeSource]
+    data_policy: str
+
+
+class IntakeCounts(BaseModel):
+    received: int
+    new: int
+    updated: int
+    unchanged: int
+    rejected: int
+    quarantined: int
+
+
+class IntakeRunRow(BaseModel):
+    id: uuid.UUID
+    run_ref: str
+    source_type: str
+    source_system: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    requested_by: str
+    counts: IntakeCounts
+    payload_digest: str
+
+
+class IntakeRunList(BaseModel):
+    items: list[IntakeRunRow]
+    total: int
+
+
+class IntakeItemOut(BaseModel):
+    id: uuid.UUID
+    source_system: str
+    source_event_id: str
+    entity_type: str
+    status: str
+    errors: list[dict[str, Any]]
+    payload_digest: str
+
+
+class IntakeRunDetail(IntakeRunRow):
+    items: list[IntakeItemOut]
+    result: dict[str, Any]

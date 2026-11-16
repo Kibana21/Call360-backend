@@ -10,6 +10,8 @@ from sqlalchemy import Connection, text
 
 from app.domain.catalog import CIPHERTEXT_SUFFIX, CP02_TABLES, DIGEST_EXCLUDED_COLUMNS, GOVERNED_LISTS
 
+SEED_AUTHOR = "SYSTEM:seed"  # app.domain.seed.BY
+
 
 def canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
@@ -22,12 +24,15 @@ def sha256_of(value: Any) -> str:
 def content_digest(conn: Connection, schema: str) -> str:
     """SHA-256 over every CP0.2 business row and the governed code-list values, in migration order and id
     order. Excludes randomised ciphertext and operational metadata. Keyed values (``value_hmac``) are
-    included, so the digest is reproducible only with the same HMAC key."""
+    included, so the digest is reproducible only with the same HMAC key.
+
+    Only seed-authored rows (``created_by = SYSTEM:seed``) are hashed, so records added later by intake
+    (CP0.4a) leave the digest unchanged, while any change to a seeded row still changes it."""
     assert schema in {"call360", "call360_test"}, schema
     conn.execute(text("SET LOCAL TIME ZONE 'UTC'"))  # stable jsonb timestamp text
     h = hashlib.sha256()
     for table in (*CP02_TABLES, "code_value"):
-        where = ""
+        where = " WHERE t.created_by = :seed_author"
         if table == "code_value":
             where = (
                 f" WHERE t.code_list_version_id IN (SELECT v.id FROM {schema}.code_list_version v "
@@ -35,7 +40,7 @@ def content_digest(conn: Connection, schema: str) -> str:
             )
         rows = conn.execute(
             text(f"SELECT to_jsonb(t) FROM {schema}.{table} t{where} ORDER BY t.id"),  # noqa: S608
-            {"lists": list(GOVERNED_LISTS)},
+            {"lists": list(GOVERNED_LISTS), "seed_author": SEED_AUTHOR},
         ).scalars()
         h.update(f"#{table}\n".encode())
         for row in rows:

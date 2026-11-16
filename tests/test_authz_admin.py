@@ -94,6 +94,16 @@ def test_be_sec_01_exact_api_surface(app) -> None:  # type: ignore[no-untyped-de
         ("GET", "/api/v1/policies/{policy_id}/sales"),
         ("GET", "/api/v1/sales/{sale_event_id}"),
         ("GET", "/api/v1/policies/{policy_id}/history"),
+        # F5 SBQ Risk Workbench (API-056…058)
+        ("GET", "/api/v1/risk-assessments"),
+        ("GET", "/api/v1/risk-assessments/{assessment_id}"),
+        ("GET", "/api/v1/risk-factors"),
+        # CP0.4a manual intake (API-080, API-082…085)
+        ("GET", "/api/v1/intake/sources"),
+        ("POST", "/api/v1/intake/manual/preview"),
+        ("POST", "/api/v1/intake/manual"),
+        ("GET", "/api/v1/intake/import-runs"),
+        ("GET", "/api/v1/intake/import-runs/{run_id}"),
     }
 
 

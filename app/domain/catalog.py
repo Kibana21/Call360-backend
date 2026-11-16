@@ -47,7 +47,10 @@ MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
 }
 CP02_TABLES: tuple[str, ...] = tuple(t for tables in MIGRATION_TABLES.values() for t in tables)
 # Tables created by later revisions that are not CP0.2 business tables (S0_DATA_MODEL §4.6, D-39).
-LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {"0008_market_scope": ("group_scope_mapping",)}
+LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
+    "0008_market_scope": ("group_scope_mapping",),
+    "0009_intake": ("intake_run", "intake_item", "field_change"),  # CP0.4a intake ledger (Build = CP0.4)
+}
 DEFERRED_TABLES = frozenset({"transcript_segment", "media_asset", "risk_override", "review_decision"})
 
 # Flag P: provenance + is_synthetic (INV-07, INV-10). Flag E: record_origin.

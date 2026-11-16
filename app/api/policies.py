@@ -65,8 +65,8 @@ router = APIRouter(prefix="/api/v1", tags=["policies"])
 _ERR: dict[int | str, dict[str, Any]] = {code: {"model": ErrorResponse} for code in (401, 403, 404, 422, 429)}
 log = logging.getLogger("call360.search")
 FIELD_LEDGER_MESSAGE = (
-    "Field-level change history is not available yet: the field_change ledger is recorded by intake and corrections "
-    "(CP0.4). Record-level source lineage is shown instead."
+    "Field-level change history is not available yet: field corrections, which write the field_change ledger, "
+    "arrive in CP0.4b. Record-level source lineage is shown instead."
 )
 MATERIAL_FIELDS = (
     "product_code",

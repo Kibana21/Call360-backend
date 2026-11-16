@@ -116,7 +116,7 @@ def test_be_kpi_03_scope_is_applied_before_aggregation(conn: Connection) -> None
 def test_be_kpi_04_not_measured_never_returns_a_number(client: TestClient, admin: Account) -> None:
     login(client, admin)
     k = kpis(client)
-    for kid in ("KPI-08", "KPI-09", "KPI-14", "OPS-06"):
+    for kid in ("KPI-08", "KPI-09", "OPS-06"):  # KPI-14 is measured from intake runs since CP0.4a
         assert k[kid]["status"] == "NOT_MEASURED" and k[kid]["value"] is None and k[kid]["stage_note"], kid
     assert "Stage S1" in k["KPI-08"]["stage_note"]
 

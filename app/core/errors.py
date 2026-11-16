@@ -52,6 +52,16 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:
         details = [{"loc": [str(p) for p in e.get("loc", ())], "type": e.get("type")} for e in exc.errors()]
+        if request.url.path.startswith("/api/v1/intake/"):
+            # API-084/085: field details with a readable message; submitted values are never echoed.
+            details = [
+                {**d, "code": e.get("type"), "message": e.get("msg")}
+                for d, e in zip(details, exc.errors(), strict=True)
+            ]
+            return JSONResponse(
+                error_body(request, "INGEST_VALIDATION_FAILED", "The transaction failed validation", False, details),
+                status_code=422,
+            )
         return JSONResponse(
             error_body(request, "VALIDATION_FAILED", "Request validation failed", False, details), status_code=422
         )
