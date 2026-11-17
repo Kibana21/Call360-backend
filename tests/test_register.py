@@ -351,7 +351,8 @@ def test_be_srch_08_terms_are_logged_and_audited_only_as_hashes(
         signed_in.get("/api/v1/search", params={"q": secret})
         signed_in.get("/api/v1/search/suggest", params={"q": secret})
         signed_in.get("/api/v1/cases", params={"q": secret})
-    server = [r for r in caplog.records if r.name != "httpx"]  # httpx is the test client, not the server
+    # httpx / httpx2 are the test client (httpx2 since S1-D's huggingface-hub dependency), not the server.
+    server = [r for r in caplog.records if r.name not in ("httpx", "httpx2")]
     assert server and secret not in str([(r.getMessage(), r.__dict__) for r in server])
     assert any(getattr(r, "q_sha256", None) == term_hash(secret) for r in caplog.records)
     after = conn.execute(

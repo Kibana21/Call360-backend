@@ -36,10 +36,12 @@ from app.domain.protection import protection_for
 from app.security.cookies import cookie_names
 from app.security.rate_limit import SlidingWindowLimiter
 from app.security.tokens import TokenService
+from app.voice import transcript
 
 
 async def _voice_sweeper(app: FastAPI, every_s: float = 15.0) -> None:
-    """S1-B: finalise abandoned, interrupted-too-long and orphaned voice sessions."""
+    """S1-B: finalise abandoned, interrupted-too-long and orphaned voice sessions; S1-C: finalise recordings past their
+    upload window and purge audio past local retention."""
     while True:
         await asyncio.sleep(every_s)
         try:
@@ -48,7 +50,17 @@ async def _voice_sweeper(app: FastAPI, every_s: float = 15.0) -> None:
             logging.getLogger("call360.voice").exception("voice session sweep failed")
 
 
-MIGRATION_HEAD = "0012_session_event"
+async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
+    """S1-D: transcribe finalised recordings outside the request path (one run at a time, idempotent, restartable)."""
+    while True:
+        await asyncio.sleep(every_s)
+        try:
+            await asyncio.to_thread(transcript.work, app)
+        except Exception:  # noqa: BLE001 — the worker must keep running; leases and retries recover a failed pass
+            logging.getLogger("call360.transcript").exception("transcription pass failed")
+
+
+MIGRATION_HEAD = "0014_transcript"
 ROUTERS = (
     health.router,
     auth.router,
@@ -82,9 +94,13 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
             # S1-B: nothing is live after a (re)start, so sessions left open are finalised; then sweep periodically.
             voice.run_sweep(app, startup=True)
             sweeper = asyncio.create_task(_voice_sweeper(app))
+            transcript.recover(app)  # nothing is transcribing after a (re)start: expire leases
+            worker = asyncio.create_task(_transcription_worker(app)) if settings.transcription_worker else None
         yield
         if with_database:
             sweeper.cancel()
+            if worker is not None:
+                worker.cancel()
             app.state.engine.dispose()
 
     app = FastAPI(

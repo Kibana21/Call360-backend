@@ -126,6 +126,12 @@ def test_be_sec_01_exact_api_surface(app) -> None:  # type: ignore[no-untyped-de
         ("GET", "/api/v1/voice/sessions/{session_id}"),
         ("POST", "/api/v1/voice/sessions/{session_id}/resume"),
         ("POST", "/api/v1/voice/sessions/{session_id}/stop"),
+        ("POST", "/api/v1/voice/sessions/{session_id}/recording/chunks"),  # S1-C
+        ("POST", "/api/v1/voice/sessions/{session_id}/recording/close"),
+        ("GET", "/api/v1/sessions/{session_id}/media/{track}/audio"),
+        ("GET", "/api/v1/sessions/{session_id}/media/timeline"),  # S1-D
+        ("GET", "/api/v1/sessions/{session_id}/transcript/segments"),
+        ("POST", "/api/v1/sessions/{session_id}/transcript/retry"),
         # CP0.4a manual intake (API-080, API-082…085)
         ("GET", "/api/v1/intake/sources"),
         ("GET", "/api/v1/intake/reference"),  # API-087 (CP0.4b)
@@ -362,10 +368,21 @@ def test_be_iam_03_reserved_permissions_never_granted(db: Session) -> None:
     assert {p.code for p in reserved} >= {
         "script.approve",
         "risk.override.approve",
-        "recording.read",
         "evidence.export",
         "pii.unmasked",
     }
+    # S1-C (D-46) recording.read and S1-D (D-50) transcript.sensitive.read are activated for USER only; ADMIN keeps
+    # the ADR-0004 segregation.
+    for code in ("recording.read", "transcript.sensitive.read"):
+        assert code not in {p.code for p in reserved}
+        holders = db.execute(
+            text(
+                "SELECT r.code FROM role_permission rp JOIN role r ON r.id = rp.role_id JOIN permission p "
+                "ON p.id = rp.permission_id WHERE p.code = :c"
+            ),
+            {"c": code},
+        ).scalars()
+        assert sorted(holders) == ["USER"], code
     granted = db.execute(
         text("SELECT count(*) FROM role_permission rp JOIN permission p ON p.id = rp.permission_id WHERE p.reserved")
     ).scalar()

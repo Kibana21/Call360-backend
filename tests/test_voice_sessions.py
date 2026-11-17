@@ -43,6 +43,18 @@ def until(ws: Any, kind: str, limit: int = 3000) -> list[dict[str, Any]]:
     raise AssertionError(f"{kind} not received: {[e['type'] for e in seen]}")
 
 
+def settled(client: TestClient, sid: str, done: Any, timeout_s: float = 5.0) -> list[str]:
+    """The server persists a socket's close asynchronously after the client leaves: poll the ledger briefly."""
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        kinds = [e["event_type"] for e in status(client, sid)["events"]]
+        if done(kinds) or time.monotonic() > deadline:
+            return kinds
+        time.sleep(0.05)
+
+
 def status(client: TestClient, sid: str) -> dict[str, Any]:
     r = client.get(f"/api/v1/voice/sessions/{sid}")
     assert r.status_code == 200, r.text
@@ -77,7 +89,9 @@ def test_start_stop_is_persisted_with_pins_ordered_events_and_case_timeline(
     )
     assert st["responses"] >= 2 and st["session_ref"] == f"SS-{st['attempt_ref'].removeprefix('AT-')}"
     kinds = [e["event_type"] for e in st["events"]]
-    assert kinds[:2] == ["SESSION_REQUESTED", "CONNECTED"] and kinds[-2:] == ["STOP_REQUESTED", "ENDED"]
+    # S1-C: the recording decision (default DECLINED) is recorded before any connection.
+    assert kinds[:3] == ["SESSION_REQUESTED", "RECORDING_CONSENT_DECLINED", "CONNECTED"]
+    assert kinds[-2:] == ["STOP_REQUESTED", "ENDED"]
     assert "BARGE_IN" in kinds and "USER_TURN_ENDED" in kinds
     assert [e["seq"] for e in st["events"]] == list(range(1, len(kinds) + 1))  # gap-free server order
     allowed = {
@@ -98,6 +112,11 @@ def test_start_stop_is_persisted_with_pins_ordered_events_and_case_timeline(
         "duration_s",
         "via",
         "notice",
+        "notice_version",  # S1-C consent record: notice identity, actor, default flag — never content
+        "notice_sha256",
+        "decided_by",
+        "defaulted",
+        "basis",
     }
     assert all(set(e["details"]) <= allowed for e in st["events"])  # metadata only: no audio or speech
     row = conn.execute(
@@ -156,7 +175,7 @@ def test_network_loss_resume_then_abandonment(client: TestClient, user: Account,
         ws.send_json({"type": "session.auth", "credential": r.json()["credential"]})
         assert until(ws, "session.ready")[-1]["resumed"] is True
         until(ws, "response.started")
-    kinds = [e["event_type"] for e in status(client, s["session_id"])["events"]]
+    kinds = settled(client, s["session_id"], lambda k: k.count("DISCONNECTED") == 2)
     assert kinds.count("CONNECTED") == 1 and "RESUMED" in kinds and kinds.count("DISCONNECTED") == 2
     with Session(conn.engine) as db, db.begin():  # 31 s later nobody came back
         done = store.sweep(db, live=set(), now=datetime.now(UTC) + timedelta(seconds=31))

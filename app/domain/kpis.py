@@ -22,7 +22,7 @@ from sqlalchemy import Connection, Result, text
 from app.domain.outcomes import derive_outcomes
 
 SGT = ZoneInfo("Asia/Singapore")
-REPORTING_VERSION = "S0-KPI-2"
+REPORTING_VERSION = "S0-KPI-3"
 REOPEN = "NOT_SUPPORTED_IN_S0"
 TERMINAL_ATTEMPTS = {"NO_ANSWER", "BUSY", "WRONG_PARTY", "FAILED", "CONNECTED", "IN_SESSION", "ENDED"}
 CONNECTED_ATTEMPTS = {"CONNECTED", "IN_SESSION", "ENDED"}
@@ -48,7 +48,9 @@ class Case:
     is_synthetic: bool
     sale_event_id: uuid.UUID
     category: str = "OPEN"
-    attempts: list[tuple[int, str, datetime | None]] = field(default_factory=list)
+    attempts: list[tuple[int, str, datetime | None]] = field(default_factory=list)  # all, incl. test sessions
+    # D-48: operational attempts only (marked browser test sessions removed); used by attempt-based KPIs.
+    ops_attempts: list[tuple[int, str, datetime | None]] = field(default_factory=list)
     holds: list[tuple[str, bool]] = field(default_factory=list)
     band: str | None = None
 
@@ -66,9 +68,22 @@ class Facts:
     materiality_version: int | None
     bands: list[tuple[str, str, dict[str, Any]]]  # active sbq_risk_band (code, label, attributes)
     intake_runs: list[dict[str, Any]] = field(default_factory=list)  # KPI-14 (CP0.4a)
+    # D-48 (owner decision 2026-11-17): explicitly marked Call360 browser test sessions (transport BROWSER, origin
+    # CALL360_RUNTIME) are excluded from operational callback KPI numerators and denominators. They stay in
+    # ``attempts`` / ``Case.attempts`` so case history, test activity and audit still show them. Seeded historical
+    # attempts are never excluded merely because the database is synthetic.
+    test_attempts: set[uuid.UUID] = field(default_factory=set)
+
+    def ops_attempts(self) -> list[tuple[uuid.UUID, uuid.UUID, str, datetime | None]]:
+        return [a for a in self.attempts if a[0] not in self.test_attempts]
 
     def due_in(self, start: datetime, end: datetime) -> list[Case]:
         return [c for c in self.cases.values() if start <= c.due_at < end]
+
+
+def is_test_attempt(transport: str | None, record_origin: str | None) -> bool:
+    """D-48: the explicit marker of a Call360 browser voice test session (attempt_kind TEST_SESSION)."""
+    return transport == "BROWSER" and record_origin == "CALL360_RUNTIME"
 
 
 def local_range(start: date, end: date) -> tuple[datetime, datetime]:
@@ -118,12 +133,19 @@ def load_facts(conn: Connection, schema: str, markets: Sequence[str], now: datet
     for c in cases.values():
         c.category = outcomes[c.ref].category
     attempts = []
+    test_attempts: set[uuid.UUID] = set()
     for r in q(
-        "SELECT a.id, a.callback_case_id, a.sequence, a.status, a.started_at FROM contact_attempt a "
-        "JOIN callback_case c ON c.id = a.callback_case_id WHERE c.market_code = ANY(:m) ORDER BY a.sequence"
+        "SELECT a.id, a.callback_case_id, a.sequence, a.status, a.started_at, a.transport, a.record_origin "
+        "FROM contact_attempt a JOIN callback_case c ON c.id = a.callback_case_id WHERE c.market_code = ANY(:m) "
+        "ORDER BY a.sequence"
     ):
-        cases[r.callback_case_id].attempts.append((r.sequence, r.status, r.started_at))
+        case = cases[r.callback_case_id]
+        case.attempts.append((r.sequence, r.status, r.started_at))
         attempts.append((r.id, r.callback_case_id, r.status, r.started_at))
+        if is_test_attempt(r.transport, r.record_origin):
+            test_attempts.add(r.id)
+        else:
+            case.ops_attempts.append((r.sequence, r.status, r.started_at))
     for r in q(
         "SELECT h.callback_case_id, h.hold_reason, h.is_blocking FROM case_hold h JOIN callback_case c "
         "ON c.id = h.callback_case_id WHERE c.market_code = ANY(:m) AND h.released_at IS NULL"
@@ -185,7 +207,18 @@ def load_facts(conn: Connection, schema: str, markets: Sequence[str], now: datet
         )
     ]
     return Facts(
-        list(markets), now, cases, attempts, runs, findings, eligible, material, mat_version, bands, intake_runs
+        list(markets),
+        now,
+        cases,
+        attempts,
+        runs,
+        findings,
+        eligible,
+        material,
+        mat_version,
+        bands,
+        intake_runs,
+        test_attempts,
     )
 
 
@@ -221,7 +254,7 @@ def _ids(cases: list[Case]) -> IdSet:
 # ---- KPI predicates: (denominator case ids, numerator case ids) for case-grain KPIs --------------------------
 def kpi_01(f: Facts, s: datetime, e: datetime) -> tuple[IdSet, IdSet]:
     den = [c for c in f.due_in(s, e) if c.state != "CANCELLED"]
-    return _ids(den), {c.id for c in den if any(st != "SCHEDULED" for _, st, _ in c.attempts)}
+    return _ids(den), {c.id for c in den if any(st != "SCHEDULED" for _, st, _ in c.ops_attempts)}
 
 
 def kpi_04(f: Facts, s: datetime, e: datetime) -> tuple[IdSet, IdSet]:
@@ -240,11 +273,12 @@ def kpi_10(f: Facts, s: datetime, e: datetime) -> tuple[IdSet, IdSet]:
 
 
 def kpi_12(f: Facts, s: datetime, e: datetime) -> tuple[IdSet, IdSet]:
-    den = [c for c in f.due_in(s, e) if sum(st != "SCHEDULED" for _, st, _ in c.attempts) >= 2]
+    den = [c for c in f.due_in(s, e) if sum(st != "SCHEDULED" for _, st, _ in c.ops_attempts) >= 2]
 
     def first_connected_late(c: Case) -> bool:
-        seqs = sorted(seq for seq, st, _ in c.attempts if st == "CONNECTED")
-        return bool(seqs) and seqs[0] >= 2
+        # Position among operational attempts (D-48), so an interleaved test session never shifts the ordinal.
+        ordinals = [i for i, (_, st, _) in enumerate(sorted(c.ops_attempts), start=1) if st == "CONNECTED"]
+        return bool(ordinals) and ordinals[0] >= 2
 
     return _ids(den), {c.id for c in den if first_connected_late(c)}
 
@@ -359,16 +393,18 @@ def compute_kpis(f: Facts, start: date, end: date, permissions: frozenset[str]) 
     due = f.due_in(s, e)
     out: list[dict[str, Any]] = []
 
-    out.append(
-        ctx.case_kpi(
-            "KPI-01",
-            "Callback coverage",
-            "Cases due in range, excluding CANCELLED; held included",
-            cancelled_excluded=True,
-        )
+    kpi01 = ctx.case_kpi(
+        "KPI-01",
+        "Callback coverage",
+        "Cases due in range, excluding CANCELLED; held included",
+        cancelled_excluded=True,
     )
-    att = [a for a in f.attempts if a[3] is not None and s <= a[3] < e and a[2] in TERMINAL_ATTEMPTS]
+    kpi01["exclusions"]["test_sessions_excluded"] = True
+    out.append(kpi01)
+    in_range = [a for a in f.attempts if a[3] is not None and s <= a[3] < e and a[2] in TERMINAL_ATTEMPTS]
+    att = [a for a in in_range if a[0] not in f.test_attempts]
     conn_n = sum(1 for a in att if a[2] in CONNECTED_ATTEMPTS)
+    tests_excluded = len(in_range) - len(att)
     out.append(
         ctx.base(
             "KPI-02",
@@ -380,7 +416,12 @@ def compute_kpis(f: Facts, start: date, end: date, permissions: frozenset[str]) 
             value=pct(conn_n, len(att)),
             dedup_rule="COUNT(contact_attempt.id)",
             eligibility_rule="Attempts in a terminal outcome (in-flight excluded)",
-            exclusions={"held_in_denominator": True, "cancelled_cases_included": True},
+            exclusions={
+                "held_in_denominator": True,
+                "cancelled_cases_included": True,
+                "test_sessions_excluded": True,
+                "test_sessions_excluded_count": tests_excluded,
+            },
         )
     )
     runs = [r for r in f.runs if s <= r["started_at"] < e and r["status"] != "NOT_STARTED"]
@@ -505,9 +546,9 @@ def compute_kpis(f: Facts, start: date, end: date, permissions: frozenset[str]) 
             breakdown={"p90_hours": round(p90, 1) if p90 is not None else None},
         )
     )
-    out.append(
-        ctx.case_kpi("KPI-12", "Retry conversion", "Cases with ≥2 non-scheduled attempts", cancelled_excluded=False)
-    )
+    kpi12 = ctx.case_kpi("KPI-12", "Retry conversion", "Cases with ≥2 non-scheduled attempts", cancelled_excluded=False)
+    kpi12["exclusions"]["test_sessions_excluded"] = True
+    out.append(kpi12)
     created = [c for c in f.cases.values() if s <= c.created_at < e]
     out.append(
         ctx.base(
@@ -719,7 +760,7 @@ def trend(f: Facts, kid: str, days: int) -> list[dict[str, Any]]:
         d = today - timedelta(days=i)
         s, e = local_range(d, d + timedelta(days=1))
         if kid == "KPI-02":
-            att = [a for a in f.attempts if a[3] is not None and s <= a[3] < e and a[2] in TERMINAL_ATTEMPTS]
+            att = [a for a in f.ops_attempts() if a[3] is not None and s <= a[3] < e and a[2] in TERMINAL_ATTEMPTS]
             num, den = sum(1 for a in att if a[2] in CONNECTED_ATTEMPTS), len(att)
         elif kid == "KPI-03":
             runs = [r for r in f.runs if s <= r["started_at"] < e and r["status"] != "NOT_STARTED"]

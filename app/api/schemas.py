@@ -779,6 +779,10 @@ class AttemptOut(BaseModel):
     ended_at: datetime | None
     failure_reason: str | None
     record_origin: str
+    # D-48 (derived, no schema change): a Call360 browser test session (transport BROWSER, origin CALL360_RUNTIME,
+    # mock provider in S1) is a TEST_SESSION, not a customer CONTACT_ATTEMPT.
+    attempt_kind: Literal["CONTACT_ATTEMPT", "TEST_SESSION"]
+    media_status: str | None  # the session's BRD §3.3 media status, when a session exists
     session: SessionLink | None
 
 
@@ -874,6 +878,189 @@ class Availability(BaseModel):
     availability: Literal["NOT_AVAILABLE"]
     reason: Literal["NO_CAPTURE_BEFORE_S1"]
     message: str
+
+
+TranscriptStatusT = Literal["PENDING", "PROCESSING", "COMPLETE", "PARTIAL", "FAILED", "UNAVAILABLE"]
+TrackT = Literal["MIC", "PROVIDER_PLAYBACK"]
+
+
+class TranscriptRun(BaseModel):
+    """One transcription of one stored track with its full provenance (D-49). Immutable once DONE or FAILED."""
+
+    run_ref: str
+    track: TrackT
+    revision: int
+    status: Literal["PENDING", "PROCESSING", "DONE", "FAILED"]
+    attempts: int
+    error_code: str | None
+    language: Literal["en"]
+    engine: str
+    engine_version: str
+    model_id: str
+    model_revision: str
+    model_sha256: str
+    config: dict[str, Any]
+    config_sha256: str
+    input_content_sha256: str
+    text_sha256: str | None
+    source_event_seq: int
+    requested_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    metrics: dict[str, Any]
+    purged_at: datetime | None
+
+
+class TranscriptTrack(BaseModel):
+    track: TrackT
+    speaker: Literal["CALLER_MIC", "MOCK_PROVIDER"]
+    speaker_label: str
+    run: TranscriptRun | None
+    revisions: int
+    speech_segments: int
+    unrecognized_segments: int
+    low_confidence_segments: int
+    uncertain_words: int
+
+
+class SessionTranscript(BaseModel):
+    """API-045 from S1-D: transcript status, provenance and counts (no text) for any reader of the case. ``status``
+    maps to the approved ``conversation_session.transcript_status``: PENDING/PROCESSING → PENDING, COMPLETE →
+    FINALIZED (QUALITY_FLAGGED when uncertain speech is present), PARTIAL → PARTIAL, FAILED/UNAVAILABLE →
+    UNAVAILABLE. COMPLETE means every stored track was processed over complete recording coverage; it never means
+    correct, reviewed or certified (``review_status`` is always NOT_REVIEWED in S1)."""
+
+    session_id: uuid.UUID
+    availability: Literal["AVAILABLE", "RESTRICTED", "PENDING", "FAILED", "NOT_AVAILABLE"]
+    status: TranscriptStatusT
+    reason: str
+    message: str
+    session_transcript_status: str
+    review_status: Literal["NOT_REVIEWED"]
+    uncertain: bool
+    language: Literal["en"]
+    recording_status: str
+    can_read_text: bool
+    can_retry: bool
+    tracks: list[TranscriptTrack]
+
+
+class TranscriptWord(BaseModel):
+    text: str
+    timeline_start_ms: int
+    timeline_end_ms: int
+    probability: float
+    uncertain: bool
+
+
+class TranscriptSegmentOut(BaseModel):
+    """One recognised (SPEECH) or rejected (UNRECOGNIZED, never with text) stretch of one track. Times are on the
+    session recording timeline; ``wav_offset_ms`` is the position in that track's evidence WAV."""
+
+    track: TrackT
+    speaker: Literal["CALLER_MIC", "MOCK_PROVIDER"]
+    speaker_label: str
+    run_ref: str
+    ordinal: int
+    kind: Literal["SPEECH", "UNRECOGNIZED"]
+    confidence: Literal["NORMAL", "LOW"]
+    rec_segment: int
+    start_sample: int
+    end_sample: int
+    timeline_start_ms: int
+    timeline_end_ms: int
+    wav_offset_ms: int | None
+    time_alignment: str
+    avg_logprob: float
+    no_speech_prob: float
+    word_count: int
+    uncertain_words: int
+    text: str | None
+    text_available: bool
+    words: list[TranscriptWord]
+    flags: list[str]
+
+
+class TimelineSpan(BaseModel):
+    segment: int
+    seq: int
+    start_sample: int
+    sample_count: int
+    timeline_start: int
+    wav_offset: int
+
+
+class TimelineGap(BaseModel):
+    type: str
+    segment: int
+    seqs: list[int]
+    timeline_start: int
+    timeline_end: int
+    estimated: bool
+    reason: str | None
+
+
+class TimelineTrack(BaseModel):
+    asset_ref: str
+    media_status: str
+    coverage: str
+    content_sha256: str | None
+    stored_samples: int
+    spans: list[TimelineSpan]
+    gaps: list[TimelineGap]
+
+
+class TimelineSegment(BaseModel):
+    segment: int
+    timeline_start: int
+    length: int
+    started_at: datetime
+
+
+class RecordingTimeline(BaseModel):
+    """Recording time ↔ playback mapping for both tracks (samples at ``sample_rate``). The evidence WAV holds stored
+    chunks only; gaps are timeline spans, never filled audio."""
+
+    session_id: uuid.UUID
+    sample_rate: int
+    total_samples: int
+    segments: list[TimelineSegment]
+    tracks: dict[str, TimelineTrack]
+
+
+class TranscriptProblem(BaseModel):
+    track: str
+    code: str
+
+
+class TranscriptSegments(BaseModel):
+    session_id: uuid.UUID
+    status: TranscriptStatusT
+    review_status: Literal["NOT_REVIEWED"]
+    segments: list[TranscriptSegmentOut]
+    problems: list[TranscriptProblem]
+    timeline: RecordingTimeline
+
+
+class TranscriptRetryOut(BaseModel):
+    session_id: uuid.UUID
+    queued_tracks: list[TrackT]
+    status: TranscriptStatusT
+
+
+class SessionMedia(BaseModel):
+    """API-046 from S1-C: the session's recording evidence. ``availability`` is the derived evidence vocabulary
+    (EXT-002): AVAILABLE (audio stored and you may retrieve it), RESTRICTED (stored, but your role lacks
+    ``recording.read``), NOT_AVAILABLE (not recorded, purged or no capture), FAILED (consent granted, nothing
+    stored)."""
+
+    session_id: uuid.UUID
+    availability: Literal["AVAILABLE", "RESTRICTED", "NOT_AVAILABLE", "FAILED"]
+    reason: str
+    message: str
+    media_status: str
+    recording: RecordingSummary
+    can_retrieve_audio: bool
 
 
 class QuestionResult(BaseModel):
@@ -1172,6 +1359,17 @@ class VoiceCaseOption(BaseModel):
     state: str
 
 
+class RecordingNotice(BaseModel):
+    """S1-C test-only recording notice (D-45). Not approved AIA/MAS consent wording."""
+
+    version: str
+    text: str
+    sha256: str
+    default_decision: Literal["DECLINED"] = "DECLINED"
+    retention_hours: int  # local development setting, not a retention policy
+    approved_policy: Literal[False] = False
+
+
 class VoicePreflight(BaseModel):
     status: Literal["AVAILABLE", "NOT_AVAILABLE"]
     reason: str
@@ -1181,10 +1379,15 @@ class VoicePreflight(BaseModel):
     data_policy: str
     test_message: list[str]
     callable_cases: list[VoiceCaseOption]  # a few callable Singapore cases, for starting a test session
+    recording_notice: RecordingNotice | None  # None when recording is not configured or not permitted
 
 
 class VoiceSessionCreate(StrictModel):
     case_id: uuid.UUID
+    # S1-C (VOICE-007, D-45): explicit recording decision; omitted means DECLINED (default no recording). GRANTED must
+    # name the notice version shown to the operator. Microphone permission is never taken as consent.
+    recording_consent: Literal["GRANTED", "DECLINED"] | None = None
+    consent_notice_version: str | None = Field(default=None, max_length=24)
 
 
 class VoiceContact(BaseModel):
@@ -1213,8 +1416,9 @@ class VoiceSessionOut(BaseModel):
     contact: VoiceContact
     identity_verification: Literal["NOT_PERFORMED"] = "NOT_PERFORMED"
     compliance_outcome: Literal["NOT_EVALUATED"] = "NOT_EVALUATED"
-    recording: Literal["DISABLED"] = "DISABLED"
+    recording_consent: Literal["GRANTED", "DECLINED"]
     transcript: Literal["NOT_AVAILABLE"] = "NOT_AVAILABLE"
+    attempt_kind: Literal["TEST_SESSION"] = "TEST_SESSION"
     test_message: list[str]
     sample_rate: int
     frame_ms: int
@@ -1229,6 +1433,74 @@ class VoiceSessionEvent(BaseModel):
     client_seq: int | None
     out_of_order: bool
     details: dict[str, Any]  # metadata only: never audio, transcript text or microphone content
+
+
+RecordingStatus = Literal["NOT_RECORDED", "RECORDING", "COMPLETE", "PARTIAL", "FAILED", "PURGED"]
+
+
+class RecordingGap(BaseModel):
+    type: str  # MISSING, UPLOAD_FAILED, DISCONTINUITY, SESSION_INTERRUPTED, END_NOT_CONFIRMED, CAPTURE_INTERRUPTED…
+    segment: int
+    seq: int | None = None
+    samples: int | None = None
+    reason: str | None = None
+
+
+class RecordingTrack(BaseModel):
+    """One recorded track's manifest metadata (EVD-003). Never an object key or storage path."""
+
+    track: Literal["MIC", "PROVIDER_PLAYBACK"]
+    asset_ref: str
+    media_status: str  # BRD §3.3 media vocabulary
+    coverage: Literal["PENDING", "COMPLETE", "PARTIAL", "NONE"]
+    codec: str
+    started_at: datetime
+    capture_ended_at: datetime | None
+    finalized_at: datetime | None
+    chunks_stored: int
+    duration_ms: int
+    bytes_stored: int
+    gaps: list[RecordingGap]
+    content_sha256: str | None
+    manifest_sha256: str | None
+    retention_until: datetime | None
+    purged_at: datetime | None
+
+
+class RecordingSummary(BaseModel):
+    status: RecordingStatus
+    consent: Literal["GRANTED", "DECLINED", "NOT_ASKED"]
+    consent_at: datetime | None
+    notice_version: str | None
+    tracks: list[RecordingTrack]
+
+
+class RecordingChunkIn(StrictModel):
+    track: Literal["MIC", "PROVIDER_PLAYBACK"]
+    segment: int = Field(ge=1, le=999)
+    seq: int = Field(ge=1, le=10_000)
+    start_sample: int = Field(ge=0)
+    sample_count: int = Field(ge=1, le=32_000)
+    sha256: str = Field(min_length=64, max_length=64)
+    data_b64: str = Field(max_length=86_000)  # ≤ 2 s of 16 kHz PCM16 mono, base64
+    captured_at: datetime | None = None
+
+
+class RecordingChunkAck(BaseModel):
+    stored: bool
+    duplicate: bool
+
+
+class RecordingCloseTrack(StrictModel):
+    track: Literal["MIC", "PROVIDER_PLAYBACK"]
+    segment: int = Field(ge=1, le=999)
+    chunks: int = Field(ge=0, le=10_000)
+    failed: list[int] = Field(default_factory=list, max_length=10_000)
+    reason: Literal["STOPPED", "MIC_DEVICE_LOST", "CONNECTION_LOST", "PAGE_CLOSED", "UPLOAD_FAILED", "CAPTURE_ERROR"]
+
+
+class RecordingCloseIn(StrictModel):
+    tracks: list[RecordingCloseTrack] = Field(min_length=1, max_length=8)
 
 
 class VoiceSessionStatus(BaseModel):
@@ -1251,7 +1523,8 @@ class VoiceSessionStatus(BaseModel):
     can_resume: bool
     identity_verification: Literal["NOT_PERFORMED"] = "NOT_PERFORMED"
     compliance_outcome: Literal["NOT_EVALUATED"] = "NOT_EVALUATED"
-    recording: Literal["DISABLED"] = "DISABLED"
+    attempt_kind: Literal["TEST_SESSION"] = "TEST_SESSION"  # D-48: a mock audio test, not a customer contact
+    recording: RecordingSummary
     events: list[VoiceSessionEvent] = Field(default_factory=list)
 
 

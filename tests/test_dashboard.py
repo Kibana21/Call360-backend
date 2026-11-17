@@ -21,6 +21,10 @@ WIDE = {"from": "2026-03-01", "to": "2027-01-01"}  # covers every seeded due dat
 START, END = date(2026, 3, 1), date(2027, 1, 1)
 
 
+# D-48: marked Call360 browser test sessions are not operational callback attempts.
+OPS = "AND NOT (a.transport = 'BROWSER' AND a.record_origin = 'CALL360_RUNTIME')"
+
+
 def kpis(client: TestClient, **params: str) -> dict[str, dict[str, Any]]:
     r = client.get("/api/v1/dashboard/kpis", params=params)
     assert r.status_code == 200, r.text
@@ -41,14 +45,15 @@ def test_be_kpi_01_values_match_independent_sql(client: TestClient, admin: Accou
     num1 = one(
         conn,
         f"SELECT count(*) FROM §callback_case c WHERE {sg} AND c.state <> 'CANCELLED' AND EXISTS "
-        "(SELECT 1 FROM §contact_attempt a WHERE a.callback_case_id = c.id AND a.status <> 'SCHEDULED')",
+        "(SELECT 1 FROM §contact_attempt a WHERE a.callback_case_id = c.id AND a.status <> 'SCHEDULED' "
+        f"{OPS})",
         **rng,
     )
     assert (k["KPI-01"]["denominator"], k["KPI-01"]["numerator"]) == (den1, num1)
     att = (
         "FROM §contact_attempt a JOIN §callback_case c ON c.id = a.callback_case_id WHERE c.market_code = 'SG' "
         "AND a.started_at >= :s AND a.started_at < :e AND a.status IN "
-        "('NO_ANSWER','BUSY','WRONG_PARTY','FAILED','CONNECTED','IN_SESSION','ENDED')"
+        f"('NO_ANSWER','BUSY','WRONG_PARTY','FAILED','CONNECTED','IN_SESSION','ENDED') {OPS}"
     )
     assert k["KPI-02"]["denominator"] == one(conn, f"SELECT count(*) {att}", **rng)
     assert k["KPI-02"]["numerator"] == one(
@@ -94,8 +99,8 @@ def test_d39_singapore_only_everywhere(client: TestClient, admin: Account, conn:
     assert att["items"] and act["items"]
     assert not {i["case_ref"] for i in att["items"]} & my_refs
     assert not {i["case_ref"] for i in act["items"]} & my_refs
-    now = datetime.now(UTC).isoformat()
-    assert all(i["occurred_at"] <= now for i in act["items"])  # recent = already happened
+    now = datetime.now(UTC)  # compare instants, not ISO strings (Z vs +00:00, fractional digits)
+    assert all(datetime.fromisoformat(i["occurred_at"]) <= now for i in act["items"])  # recent = already happened
     risk = client.get("/api/v1/dashboard/risk-distribution").json()
     assert risk["total_open"] == k["OPS-01"]["numerator"]
     assert risk["markets"] == att["markets"] == act["markets"] == ["SG"]
@@ -173,7 +178,7 @@ def test_range_trend_and_drilldowns(client: TestClient, admin: Account) -> None:
     k = kpis(client)
     assert k["KPI-01"]["range"]["to"] > k["KPI-01"]["range"]["from"]
     assert k["KPI-01"]["drilldown"]["numerator"].startswith("/calls?kpi=KPI-01&kpi_set=numerator")
-    assert all(v["reporting_version"] == "S0-KPI-2" and v["synthetic_badge"] for v in k.values())
+    assert all(v["reporting_version"] == "S0-KPI-3" and v["synthetic_badge"] for v in k.values())
     t = client.get("/api/v1/dashboard/trend", params={"kpi": "KPI-02", "days": 7}).json()
     assert len(t["points"]) == 7 and t["markets"] == ["SG"]
     assert client.get("/api/v1/dashboard/trend", params={"days": 10}).status_code == 422

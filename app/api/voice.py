@@ -10,11 +10,13 @@
 - ``POST /voice/sessions/{id}/resume`` (owner): a new credential for an interrupted session within 30 s (or a session
   that never connected, within its connect window), e.g. after a refresh or a network drop.
 - ``POST /voice/sessions/{id}/stop`` (owner): idempotent finalisation, also ending a live connection elsewhere.
-- ``GET /voice/sessions/{id}`` and ``GET /voice/sessions?case_id=`` (``case.read``, market-scoped): status, counts
-  and the persisted event timeline.
+- ``GET /voice/sessions/{id}`` and ``GET /voice/sessions?case_id=`` (``case.read``, market-scoped): status, counts,
+  recording evidence and the persisted event timeline.
+- S1-C: ``POST /voice/sessions`` takes the recording decision (default DECLINED); ``POST …/{id}/recording/chunks``
+  and ``POST …/{id}/recording/close`` (owner, CSRF, own rate limit) receive the browser's consent-gated recording.
 
-Lifecycle and the event ledger are in ``app.voice.store``. No session records audio or transcript, verifies anyone or
-changes the case state: identity ``NOT_PERFORMED``, compliance ``NOT_EVALUATED``.
+Lifecycle and the event ledger are in ``app.voice.store``; recording in ``app.voice.media``. No session produces a
+transcript, verifies anyone or changes the case state: identity ``NOT_PERFORMED``, compliance ``NOT_EVALUATED``.
 """
 
 from __future__ import annotations
@@ -41,6 +43,11 @@ from app.api.case_detail import _case, _holds, _pin, call_blockers
 from app.api.deps import csrf_protected
 from app.api.schemas import (
     ErrorResponse,
+    RecordingChunkAck,
+    RecordingChunkIn,
+    RecordingCloseIn,
+    RecordingNotice,
+    RecordingSummary,
     VoiceCapability,
     VoiceCaseOption,
     VoiceContact,
@@ -55,7 +62,7 @@ from app.audit.chain import Actor, RequestMeta, write_audit
 from app.core.errors import AppError
 from app.security.authz import AuthContext, get_db, request_meta, require, resolve_auth
 from app.security.scope import not_found
-from app.voice import store
+from app.voice import media, store
 from app.voice.mock import FIXED_MESSAGE, MockVoiceProvider
 from app.voice.provider import FRAME_MS, SAMPLE_RATE, Inbound, SessionStats, VoiceProvider
 
@@ -139,11 +146,25 @@ def provider_for(app: Any) -> VoiceProvider:
 
 
 def run_sweep(app: Any, *, startup: bool = False) -> list[str]:
-    """Finalise stale or orphaned sessions (also called at startup: nothing is live after a restart)."""
+    """Finalise stale or orphaned sessions (also called at startup: nothing is live after a restart), then finalise
+    recordings whose upload window has passed and purge recordings past local retention (S1-C)."""
+    rs = media.store_for(app)
     with app.state.session_factory() as db, db.begin():
         if db.execute(text("SELECT to_regclass('session_event')")).scalar() is None:
             return []  # an earlier schema (before migration 0012) has no voice sessions to recover
-        return store.sweep(db, live=set(registry(app).live), startup=startup)
+        done = store.sweep(db, live=set(registry(app).live), startup=startup, media_store=rs)
+        if db.execute(text("SELECT to_regclass('media_asset')")).scalar() is not None:
+            done += media.sweep(db, rs)
+        return done
+
+
+def _notice(app: Any) -> RecordingNotice:
+    return RecordingNotice(
+        version=media.NOTICE_VERSION,
+        text=media.NOTICE_TEXT,
+        sha256=media.NOTICE_SHA256,
+        retention_hours=app.state.settings.recording_retention_hours,
+    )
 
 
 def _callable_cases(db: Session, markets: list[str], limit: int = 6) -> list[VoiceCaseOption]:
@@ -171,6 +192,8 @@ def voice_preflight(
     auth: AuthContext = Depends(require("voice.preflight.read")),
 ) -> VoicePreflight:
     can_start = "voice.session.start" in auth.permissions
+    recording_ok = can_start and media.store_for(request.app) is not None
+    transcript_ok = recording_ok and request.app.state.settings.transcription_model_dir is not None
     caps = [
         VoiceCapability(
             code="VOICE_SESSION",
@@ -199,13 +222,33 @@ def voice_preflight(
         ),
         VoiceCapability(
             code="RECORDING",
-            label="Recording",
-            status="DISABLED",
-            reason="Not captured in S1-A; consent-gated recording arrives in S1-C",
+            label="Recording (consent-gated)",
+            status="AVAILABLE" if recording_ok else "NOT_AVAILABLE",
+            reason="Optional and off by default: microphone and played test audio are recorded only after you choose "
+            "to record (test-only notice, not approved consent wording); encrypted locally, deleted after "
+            f"{request.app.state.settings.recording_retention_hours} h (local setting, not a retention policy)"
+            if recording_ok
+            else (
+                "Recording is not configured on this server (no recording key)"
+                if can_start
+                else "Your role cannot start voice sessions"
+            ),
             stage="S1-C",
         ),
         VoiceCapability(
-            code="TRANSCRIPT", label="Transcript", status="NOT_AVAILABLE", reason="Arrives in S1-D", stage="S1-D"
+            code="TRANSCRIPT",
+            label="Transcript (after the session)",
+            status="AVAILABLE" if transcript_ok else "NOT_AVAILABLE",
+            reason="Recorded tracks are transcribed after the session on this server by a local offline model "
+            "(faster-whisper small.en, English only). A machine transcript — not reviewed or certified; shown in "
+            "Call Detail"
+            if transcript_ok
+            else (
+                "Transcription is not configured on this server (no local model)"
+                if recording_ok
+                else "Transcripts need a recorded session"
+            ),
+            stage="S1-D",
         ),
         VoiceCapability(
             code="SCRIPT_CONTROLLER",
@@ -240,6 +283,7 @@ def voice_preflight(
         data_policy=request.app.state.settings.data_policy,
         test_message=list(FIXED_MESSAGE),
         callable_cases=_callable_cases(db, sorted(auth.markets)) if can_start else [],
+        recording_notice=_notice(request.app) if recording_ok else None,
     )
 
 
@@ -254,6 +298,7 @@ def _issue(
     *,
     resumed: bool,
 ) -> VoiceSessionOut:
+    consent = media.consent_of(db, attempt_id)
     contact = (
         db.execute(
             text(
@@ -300,6 +345,7 @@ def _issue(
             channel=snap.get("channel"),
             masked_contact=snap.get("masked_value"),
         ),
+        recording_consent="GRANTED" if consent and consent["decision"] == "GRANTED" else "DECLINED",
         test_message=list(FIXED_MESSAGE),
         sample_rate=SAMPLE_RATE,
         frame_ms=FRAME_MS,
@@ -353,7 +399,18 @@ def create_session(
             "This case has no published script, decided risk assessment and fact snapshot to pin",
         )
     assert eligible is not None
-    store.sweep(db, live=set(registry(request.app).live))  # finalise anything abandoned before adding more
+    granted = body.recording_consent == "GRANTED"
+    if granted and body.consent_notice_version != media.NOTICE_VERSION:
+        raise AppError(
+            422,
+            "CONSENT_NOTICE_MISMATCH",
+            "Recording consent must name the current test notice version",
+            details=[{"loc": ["body", "consent_notice_version"], "code": "MISMATCH", "message": media.NOTICE_VERSION}],
+        )
+    rs = media.store_for(request.app)
+    if granted and rs is None:
+        raise AppError(409, "RECORDING_NOT_AVAILABLE", "Recording is not configured on this server")
+    store.sweep(db, live=set(registry(request.app).live), media_store=rs)  # finalise anything abandoned first
     attempt_id, attempt_ref = store.create_attempt(
         db,
         case_id=body.case_id,
@@ -367,6 +424,9 @@ def create_session(
         },
         actor=str(auth.principal_id),
         provider=provider_for(request.app).name,
+    )
+    media.record_consent(
+        db, attempt_id, granted=granted, actor=str(auth.principal_id), defaulted=body.recording_consent is None
     )
     write_audit(
         db,
@@ -383,7 +443,8 @@ def create_session(
             "provider": provider_for(request.app).name,
             "identity_verification": "NOT_PERFORMED",
             "compliance_outcome": "NOT_EVALUATED",
-            "recording": "DISABLED",
+            "recording_consent": "GRANTED" if granted else "DECLINED",
+            "consent_notice_version": media.NOTICE_VERSION if granted else None,
         },
     )
     out = _issue(request, db, auth, attempt_id, body.case_id, c["case_ref"], attempt_ref, resumed=False)
@@ -419,7 +480,7 @@ def resume_session(
     auth: AuthContext = Depends(require("voice.session.start")),
 ) -> VoiceSessionOut:
     _write_guard(request, auth)
-    store.sweep(db, live=set(registry(request.app).live))
+    store.sweep(db, live=set(registry(request.app).live), media_store=media.store_for(request.app))
     st = _owned(db, request, auth, session_id)
     resumable = st["session_state"] == "INTERRUPTED" or (st["session_id"] is None and st["status"] == "INITIATED")
     if not resumable or session_id in registry(request.app).live:
@@ -453,7 +514,13 @@ def stop_session(
         store.append_event(
             db, session_id, "STOP_REQUESTED", source="SERVER", actor=str(auth.principal_id), details={"via": "rest"}
         )
-        store.finalize(db, session_id, actor=str(auth.principal_id), reason="STOPPED_BY_USER")
+        store.finalize(
+            db,
+            session_id,
+            actor=str(auth.principal_id),
+            reason="STOPPED_BY_USER",
+            media_store=media.store_for(request.app),
+        )
         db.commit()
     return _status(db, auth, session_id, events=True)
 
@@ -504,6 +571,7 @@ def _status(db: Session, auth: AuthContext, attempt_id: uuid.UUID, *, events: bo
         started_by=next(iter(names.values()), st["created_by"]),
         yours=mine,
         can_resume=mine and (status == "INTERRUPTED" or status == "PENDING_CONNECTION"),
+        recording=RecordingSummary(**media.summary(db, attempt_id)),
         events=[VoiceSessionEvent(**{**dict(r), "details": dict(r["details"])}) for r in rows] if events else [],
     )
 
@@ -550,6 +618,101 @@ def list_sessions(
         .all()
     )
     return VoiceSessionList(items=[_status(db, auth, i, events=False) for i in ids])
+
+
+# ---- S1-C recording uploads ------------------------------------------------------------------------------------
+def _recording_guard(request: Request, auth: AuthContext) -> None:
+    """CSRF plus a recording-specific rate limit (two tracks upload a chunk every 2 s; the general write limit of
+    ``writes_per_minute`` is for administrative changes)."""
+    from app.security import csrf as _csrf
+
+    settings = request.app.state.settings
+    _csrf.verify(
+        request, settings.csrf_secret.get_secret_value(), f"sid:{auth.session_id}", request.app.state.cookies.csrf
+    )
+    if not request.app.state.limiter.allow(f"recording:{auth.principal_id}", settings.recording_chunks_per_minute):
+        raise AppError(429, "RATE_LIMITED", "Too many recording uploads; try again shortly", retryable=True)
+
+
+def _recording_error(exc: media.RecordingError) -> AppError:
+    return AppError(exc.status, exc.code, exc.message)
+
+
+@router.post(
+    "/voice/sessions/{session_id}/recording/chunks",
+    response_model=RecordingChunkAck,
+    operation_id="voice_recording_chunk",
+    responses=_ERR,
+)
+@csrf_protected
+def upload_recording_chunk(
+    session_id: uuid.UUID,
+    body: RecordingChunkIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require("voice.session.start")),
+) -> RecordingChunkAck:
+    _recording_guard(request, auth)
+    _owned(db, request, auth, session_id)
+    try:
+        ack = media.accept_chunk(
+            db,
+            media.store_for(request.app),
+            session_id,
+            media.Chunk(
+                track=body.track,
+                segment=body.segment,
+                seq=body.seq,
+                start_sample=body.start_sample,
+                sample_count=body.sample_count,
+                sha256=body.sha256,
+                data_b64=body.data_b64,
+                captured_at=body.captured_at,
+            ),
+            actor=str(auth.principal_id),
+        )
+    except media.RecordingError as exc:
+        db.rollback()
+        raise _recording_error(exc) from exc
+    db.commit()
+    return RecordingChunkAck(**ack)
+
+
+@router.post(
+    "/voice/sessions/{session_id}/recording/close",
+    response_model=RecordingSummary,
+    operation_id="voice_recording_close",
+    responses=_ERR,
+)
+@csrf_protected
+def close_recording(
+    session_id: uuid.UUID,
+    body: RecordingCloseIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require("voice.session.start")),
+) -> RecordingSummary:
+    _recording_guard(request, auth)
+    _owned(db, request, auth, session_id)
+    rs = media.store_for(request.app)
+    try:
+        for t in body.tracks:
+            media.close_track(
+                db,
+                rs,
+                session_id,
+                track=t.track,
+                segment=t.segment,
+                chunks=t.chunks,
+                failed=t.failed,
+                reason=t.reason,
+                actor=str(auth.principal_id),
+            )
+    except media.RecordingError as exc:
+        db.rollback()
+        raise _recording_error(exc) from exc
+    db.commit()
+    return RecordingSummary(**media.summary(db, session_id))
 
 
 # ---- WebSocket stream ------------------------------------------------------------------------------------------
@@ -707,12 +870,18 @@ async def voice_stream(websocket: WebSocket, session_id: uuid.UUID) -> None:
     provider = provider_for(app)
     actor = str(auth.principal_id)
 
-    def _connect() -> str:
+    rs = media.store_for(app)
+
+    def _connect() -> tuple[str, dict[str, Any]]:
         with app.state.session_factory() as db, db.begin():
-            return store.connect(db, session.attempt_id, actor=actor, provider=provider.name)
+            mode = store.connect(db, session.attempt_id, actor=actor, provider=provider.name)
+            rec = media.on_connect(
+                db, rs, session.attempt_id, actor=actor, retention_hours=app.state.settings.recording_retention_hours
+            )
+            return mode, rec
 
     try:
-        mode = await asyncio.to_thread(_connect)
+        mode, recording = await asyncio.to_thread(_connect)
     except store.TransitionError as exc:
         reg.release(session.attempt_id)
         await websocket.send_text(json.dumps({"type": "error", "code": "SESSION_NOT_CONNECTABLE", "detail": str(exc)}))
@@ -738,7 +907,7 @@ async def voice_stream(websocket: WebSocket, session_id: uuid.UUID) -> None:
                 "max_duration_s": MAX_DURATION_S,
                 "identity_verification": "NOT_PERFORMED",
                 "compliance_outcome": "NOT_EVALUATED",
-                "recording": "DISABLED",
+                "recording": recording,
             }
         )
         try:
@@ -766,7 +935,9 @@ async def voice_stream(websocket: WebSocket, session_id: uuid.UUID) -> None:
                     store.interrupt(db, session.attempt_id, actor=actor, reason="CONNECTION_LOST")
                     return "INTERRUPTED"
                 return str(
-                    store.finalize(db, session.attempt_id, actor=actor, reason=stats.end_reason, stats=summary)["state"]
+                    store.finalize(
+                        db, session.attempt_id, actor=actor, reason=stats.end_reason, stats=summary, media_store=rs
+                    )["state"]
                 )
 
         final = await asyncio.to_thread(_close)

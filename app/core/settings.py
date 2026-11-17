@@ -44,6 +44,27 @@ class Settings(BaseSettings):
     # the CP0.2 domain exists (startup, readiness, seed), so a pre-CP0.2 development schema still runs.
     pii_encryption_key: SecretStr | None = None
     pii_hmac_key: SecretStr | None = None
+    # S1-C recording (D-47): a separate base64url 32-byte key for audio objects. Without it recording is NOT_AVAILABLE.
+    # Audio objects live outside the database and the repositories; retention is a local development setting only
+    # (no approved retention policy, BRD DEC-015).
+    recording_encryption_key: SecretStr | None = None
+    recording_storage_dir: Path = Path.home() / ".call360" / "recordings"
+    recording_retention_hours: int = 168
+    recording_chunks_per_minute: int = 150
+    # S1-D transcription (D-49, D-51, D-52): local, offline faster-whisper small.en. Without a model directory the
+    # transcript is UNAVAILABLE (ENGINE_NOT_CONFIGURED). Model files live outside Git and are verified against the
+    # pinned SHA-256 values in app.voice.transcript before use. The indicator thresholds are configurable development
+    # values: model probabilities are not calibrated compliance-confidence scores, and nothing is ever certified.
+    transcription_model_dir: Path | None = None
+    transcription_worker: bool = True
+    transcription_threads: int = 4
+    # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
+    transcript_low_logprob: float = -0.45
+    transcript_reject_logprob: float = -0.8
+    transcript_word_prob: float = 0.7
+    transcript_no_speech_prob: float = 0.6
+    transcript_max_compression: float = 2.4
+    transcript_split_pause_s: float = 1.0
 
     access_token_ttl_seconds: int = 600
     refresh_idle_seconds: int = 1800
@@ -94,6 +115,20 @@ class Settings(BaseSettings):
             enc, mac = decode_key(keys[0].get_secret_value()), decode_key(keys[1].get_secret_value())
             if enc == mac:
                 raise ValueError("PII_ENCRYPTION_KEY and PII_HMAC_KEY must differ")
+            if self.recording_encryption_key is not None:
+                rec = decode_key(self.recording_encryption_key.get_secret_value())
+                if rec in (enc, mac):
+                    raise ValueError("RECORDING_ENCRYPTION_KEY must differ from the PII keys")
+        if self.recording_retention_hours < 1:
+            raise ValueError("RECORDING_RETENTION_HOURS must be at least 1")
+        if not (-5.0 <= self.transcript_reject_logprob < self.transcript_low_logprob <= 0.0):
+            raise ValueError("transcript log-probability thresholds are out of range or out of order")
+        if not (0.0 <= self.transcript_word_prob <= 1.0 and 0.2 <= self.transcript_split_pause_s <= 10.0):
+            raise ValueError("transcript word or pause thresholds are out of range")
+        if not (0.0 <= self.transcript_no_speech_prob <= 1.0 and self.transcript_max_compression > 1.0):
+            raise ValueError("transcript rejection thresholds are out of range")
+        if not 1 <= self.transcription_threads <= 16:
+            raise ValueError("TRANSCRIPTION_THREADS must be between 1 and 16")
 
     @property
     def database_url_secret(self) -> SecretStr | None:

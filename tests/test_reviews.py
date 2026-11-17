@@ -85,13 +85,15 @@ def test_filters_search_sort_and_paging(signed_in: TestClient) -> None:
 
 
 def test_voice_preflight_reports_the_s1a_state_honestly(signed_in: TestClient) -> None:
-    """API-078 after S1-A: a mock-provider test session is available; recording, transcript, script control, identity
-    verification and compliance evaluation are not."""
+    """API-078 after S1-C: a mock-provider test session and consent-gated recording are available (default: not
+    recorded); transcript, script control, identity verification and compliance evaluation are not."""
     v = get(signed_in, "/api/v1/voice/preflight")
     assert (v["status"], v["stage"], v["provider"]) == ("AVAILABLE", "S1-A", "MOCK")
     caps = {c["code"]: c["status"] for c in v["capabilities"]}
-    assert caps["VOICE_SESSION"] == "AVAILABLE" and caps["RECORDING"] == "DISABLED"
-    assert caps["TRANSCRIPT"] == caps["SCRIPT_CONTROLLER"] == "NOT_AVAILABLE"
+    assert caps["VOICE_SESSION"] == "AVAILABLE" and caps["RECORDING"] == "AVAILABLE"
+    assert v["recording_notice"]["default_decision"] == "DECLINED" and v["recording_notice"]["approved_policy"] is False
+    # S1-D: transcripts after a recorded session, by the local model configured in .env.test.
+    assert caps["TRANSCRIPT"] == "AVAILABLE" and caps["SCRIPT_CONTROLLER"] == "NOT_AVAILABLE"
     assert (caps["IDENTITY"], caps["COMPLIANCE"]) == ("NOT_PERFORMED", "NOT_EVALUATED")
     assert v["test_message"][-1] == "This test does not verify an insurance transaction."
 

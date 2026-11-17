@@ -101,11 +101,15 @@ def test_every_malaysian_object_is_an_audited_404_like_a_missing_one(
     assert len(objects) >= 20
     for path in objects:
         param = re.search(r"\{(\w+)\}", path).group(1)  # type: ignore[union-attr]
+        target = path.replace("{track}", "MIC")  # S1-C audio route: second, non-object path parameter
         mine, missing = (
-            admin_client.get(path.replace(f"{{{param}}}", str(ids[param]))),
-            admin_client.get(path.replace(f"{{{param}}}", str(uuid.uuid4()))),
+            admin_client.get(target.replace(f"{{{param}}}", str(ids[param]))),
+            admin_client.get(target.replace(f"{{{param}}}", str(uuid.uuid4()))),
         )
-        assert mine.status_code == missing.status_code == 404, (path, mine.status_code, missing.status_code)
+        # ADMIN lacks recording.read (D-46) and transcript.sensitive.read (D-50): those routes refuse before any
+        # lookup, identically for both.
+        expected = 403 if path.endswith(("/audio", "/transcript/segments")) else 404
+        assert mine.status_code == missing.status_code == expected, (path, mine.status_code, missing.status_code)
         strip = lambda r: {k: v for k, v in r.json().items() if k != "correlation_id"}  # noqa: E731
         assert strip(mine) == strip(missing), path
     denied = conn.execute(

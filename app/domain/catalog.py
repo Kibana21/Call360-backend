@@ -51,8 +51,10 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
     "0008_market_scope": ("group_scope_mapping",),
     "0009_intake": ("intake_run", "intake_item", "field_change"),  # CP0.4a intake ledger (Build = CP0.4)
     "0012_session_event": ("session_event",),  # S1-B voice-session event ledger (EVD-002)
+    "0013_recording": ("media_asset", "media_chunk"),  # S1-C recording manifest (EVD-001, EVD-003)
+    "0014_transcript": ("transcript_run", "transcript_segment"),  # S1-D machine transcripts (VOICE-009, EVD-004)
 }
-DEFERRED_TABLES = frozenset({"transcript_segment", "media_asset", "risk_override", "review_decision"})
+DEFERRED_TABLES = frozenset({"risk_override", "review_decision"})  # media_asset: S1-C; transcript_segment: S1-D
 
 # Flag P: provenance + is_synthetic (INV-07, INV-10). Flag E: record_origin.
 P_TABLES: tuple[str, ...] = tuple(t for t in CP02_TABLES if t not in {"external_reference", "case_hold", "case_event"})

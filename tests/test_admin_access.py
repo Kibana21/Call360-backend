@@ -237,7 +237,7 @@ def test_system_health(admin_client: TestClient) -> None:
     checks = {c["code"]: c["status"] for c in body["checks"]}
     assert checks["DATABASE"] == checks["MIGRATIONS"] == checks["DATA_POLICY"] == checks["AUDIT_CHAIN"] == "OK"
     assert checks["MOCK_UPSTREAM"] == checks["VOICE"] == "NOT_AVAILABLE"
-    assert body["migration_head"] == body["expected_migration_head"] == "0012_session_event"
+    assert body["migration_head"] == body["expected_migration_head"] == "0014_transcript"
     assert body["enabled_markets"] == ["SG"] and body["current_stage"] == "S0" and body["audit_chain_head"]
     sha = (Path(__file__).resolve().parents[1] / "contracts" / "generated" / "openapi.sha256").read_text().strip()
     assert body["openapi_sha256"] == sha

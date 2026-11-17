@@ -1,0 +1,201 @@
+{
+  "description": "S1-D golden audio: synthetic macOS TTS English speech with known text; expected times measured from the generated audio (energy onset/offset). Not real customer audio.",
+  "sample_rate": 16000,
+  "clips": [
+    {
+      "id": "g01_us_greeting",
+      "file": "g01_us_greeting.wav",
+      "sha256": "9316b810b04e96e01461d5fb9f3ab894e08c6c93d433edd92cd5bf0c2950ea74",
+      "expect": "SPEECH",
+      "voice": "Samantha",
+      "duration_s": 4.13,
+      "post": {},
+      "utterances": [
+        {
+          "text": "Good morning. I am calling about my policy renewal.",
+          "start_s": 0.5,
+          "end_s": 3.53
+        }
+      ]
+    },
+    {
+      "id": "g02_gb_two_turns",
+      "file": "g02_gb_two_turns.wav",
+      "sha256": "216673a4b6e65b935da021d4301486e6ad4ce5e65ecd4f13ddcd1616f054cc6e",
+      "expect": "SPEECH",
+      "voice": "Daniel",
+      "duration_s": 7.45,
+      "post": {},
+      "utterances": [
+        {
+          "text": "Yes, I understand the policy.",
+          "start_s": 0.4,
+          "end_s": 2.65
+        },
+        {
+          "text": "Please call me back tomorrow afternoon.",
+          "start_s": 4.65,
+          "end_s": 6.85
+        }
+      ]
+    },
+    {
+      "id": "g03_au_question",
+      "file": "g03_au_question.wav",
+      "sha256": "2ce1b5d5c452580b5566a7200a29b8ca406dd7b3c6ebf851262d643dd787aab3",
+      "expect": "SPEECH",
+      "voice": "Karen",
+      "duration_s": 3.61,
+      "post": {},
+      "utterances": [
+        {
+          "text": "Can you tell me when my next payment is due?",
+          "start_s": 0.6,
+          "end_s": 3.01
+        }
+      ]
+    },
+    {
+      "id": "g04_ie_statement",
+      "file": "g04_ie_statement.wav",
+      "sha256": "bc067413296edc16504330c5e9558db7581ef25d863ecd9891f66c424fd623ce",
+      "expect": "SPEECH",
+      "voice": "Moira",
+      "duration_s": 5.49,
+      "post": {},
+      "utterances": [
+        {
+          "text": "I did not receive the product summary, and I would like it sent by email.",
+          "start_s": 0.5,
+          "end_s": 4.89
+        }
+      ]
+    },
+    {
+      "id": "g05_in_statement",
+      "file": "g05_in_statement.wav",
+      "sha256": "df4f266c3d9b72258c761996a2c843fc7365f37657c8a20717d41ce0d0db218a",
+      "expect": "SPEECH",
+      "voice": "Rishi",
+      "duration_s": 4.99,
+      "post": {},
+      "utterances": [
+        {
+          "text": "I bought the savings plan last month through my financial adviser.",
+          "start_s": 0.5,
+          "end_s": 4.39
+        }
+      ]
+    },
+    {
+      "written_form": "My policy number ends in 4729 and the premium is 300 dollars.",
+      "id": "g06_za_numbers",
+      "file": "g06_za_numbers.wav",
+      "sha256": "a92729feb920ab25ec71a60cc541d27d5152a9df25be6a9cfb56a3e7abe021f3",
+      "expect": "SPEECH",
+      "voice": "Tessa",
+      "duration_s": 6.29,
+      "post": {},
+      "utterances": [
+        {
+          "text": "My policy number ends in four seven two nine and the premium is three hundred dollars.",
+          "start_s": 0.5,
+          "end_s": 5.69
+        }
+      ]
+    },
+    {
+      "id": "g07_us_noisy",
+      "file": "g07_us_noisy.wav",
+      "sha256": "9d1c9720ff57791259d09fd95e96a3be7f822357cadce30ca04e3dd19abe73d8",
+      "expect": "DEGRADED",
+      "voice": "Samantha",
+      "duration_s": 2.88,
+      "post": {
+        "noise_snr_db": -6.0
+      },
+      "utterances": [
+        {
+          "text": "I am not sure which plan I bought.",
+          "start_s": 0.5,
+          "end_s": 2.28
+        }
+      ]
+    },
+    {
+      "id": "g08_gb_very_low",
+      "file": "g08_gb_very_low.wav",
+      "sha256": "5391a92b413a9116ba87f7d136c9039d1d60b7eda84c3545d05ec69207e3dde5",
+      "expect": "DEGRADED",
+      "voice": "Daniel",
+      "duration_s": 3.51,
+      "post": {
+        "gain_db": -42.0,
+        "noise_snr_db": 0.0
+      },
+      "utterances": [
+        {
+          "text": "Please send the documents to my home address.",
+          "start_s": 0.5,
+          "end_s": 2.91
+        }
+      ]
+    },
+    {
+      "id": "g09_silence",
+      "file": "g09_silence.wav",
+      "sha256": "f751fd7094be088dc785125e4a1a0222a17c2bd20469aa31728ca5e515ed5809",
+      "expect": "NO_SPEECH",
+      "voice": null,
+      "duration_s": 4.0,
+      "post": {
+        "seconds": 4.0
+      },
+      "utterances": []
+    },
+    {
+      "id": "g12_us_buried",
+      "file": "g12_us_buried.wav",
+      "sha256": "9ab16b9186a18a477ea4a919f1c1cbbd799bcc77b9704aa7f9d7144872fffbd3",
+      "expect": "DEGRADED",
+      "voice": "Samantha",
+      "duration_s": 4.13,
+      "post": {
+        "noise_snr_db": -10.0
+      },
+      "utterances": [
+        {
+          "text": "Good morning. I am calling about my policy renewal.",
+          "start_s": 0.5,
+          "end_s": 3.53
+        }
+      ]
+    },
+    {
+      "id": "g10_tone_bursts",
+      "file": "g10_tone_bursts.wav",
+      "sha256": "aaa6844ce5da8f4b06c363bc21000ce21acfdefa068a1eae00027b1f243e0a35",
+      "expect": "NO_SPEECH",
+      "voice": null,
+      "duration_s": 5.0,
+      "post": {
+        "seconds": 5.0,
+        "tone_hz": 220.0
+      },
+      "utterances": []
+    },
+    {
+      "id": "g11_noise",
+      "file": "g11_noise.wav",
+      "sha256": "cc02851d49bc40da7a249b1c2c17b9bb872285dfd552cb1af78b614b49164c3d",
+      "expect": "NO_SPEECH",
+      "voice": null,
+      "duration_s": 4.0,
+      "post": {
+        "seconds": 4.0,
+        "noise_rms": 0.05
+      },
+      "utterances": []
+    }
+  ]
+}

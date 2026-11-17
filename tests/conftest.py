@@ -44,7 +44,8 @@ def db(engine: Engine) -> Iterator[Session]:
 
 @pytest.fixture()
 def app(settings: Settings, engine: Engine):  # type: ignore[no-untyped-def]
-    return create_app(settings)
+    # S1-D: tests drive transcription explicitly (transcript.work) instead of the background worker.
+    return create_app(settings.model_copy(update={"transcription_worker": False}))
 
 
 @pytest.fixture()
@@ -95,3 +96,14 @@ def seeded(engine: Engine, settings: Settings) -> Iterator[None]:
     with engine.begin() as c:
         seed(c, settings.target_schema, DataProtection.from_settings(settings))
     yield
+
+
+@pytest.fixture(scope="session")
+def asr(settings: Settings):  # type: ignore[no-untyped-def]
+    """S1-D: the pinned local transcription engine, loaded once (model files verified against pinned SHA-256)."""
+    from app.voice.transcript import FasterWhisperEngine
+
+    model = settings.transcription_model_dir
+    if model is None or not model.expanduser().is_dir():
+        pytest.skip("TRANSCRIPTION_MODEL_DIR is not configured in .env.test (S1-D model outside Git)")
+    return FasterWhisperEngine(model.expanduser(), settings.transcription_threads)

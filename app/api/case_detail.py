@@ -10,16 +10,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.api.deps import csrf_protected
 from app.api.schemas import (
     AttemptList,
     AttemptOut,
-    Availability,
     CaseDetail,
     ContactSelectionOut,
     ErrorResponse,
@@ -32,6 +33,8 @@ from app.api.schemas import (
     PartyRoleOut,
     PolicyOut,
     QuestionResult,
+    RecordingSummary,
+    RecordingTimeline,
     RiskAssessmentOut,
     RiskFactorOut,
     SaleOut,
@@ -43,15 +46,22 @@ from app.api.schemas import (
     ScriptVersionDetail,
     SessionDetail,
     SessionLink,
+    SessionMedia,
+    SessionTranscript,
     Sla,
     SurveyRunDetail,
     Timeline,
     TimelineItem,
+    TranscriptRetryOut,
+    TranscriptSegments,
 )
-from app.domain.kpis import breached, load_facts, sla_exempt
+from app.audit.chain import write_audit
+from app.core.errors import AppError
+from app.domain.kpis import breached, is_test_attempt, load_facts, sla_exempt
 from app.domain.outcomes import applicable_mandatory, controls_satisfied, derive_outcomes, question_satisfied
 from app.security.authz import AuthContext, get_db, request_meta, require
 from app.security.scope import not_found
+from app.voice import media, transcript
 
 router = APIRouter(prefix="/api/v1", tags=["call-detail"])
 _ERR: dict[int | str, dict[str, Any]] = {code: {"model": ErrorResponse} for code in (401, 403, 404, 422, 429)}
@@ -358,6 +368,7 @@ def case_detail(
 # ---- API-038, API-043 ------------------------------------------------------------------------------------------
 _ATTEMPT_SQL = (
     "SELECT a.*, pa.masked_name AS contacted_party, s.id AS session_id, s.session_ref, s.state AS session_state, "
+    "s.media_status, "
     "(SELECT r.id FROM survey_run r WHERE r.session_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS run_id, "
     "(SELECT r.status FROM survey_run r WHERE r.session_id = s.id ORDER BY r.started_at DESC LIMIT 1) AS run_status "
     "FROM contact_attempt a JOIN callback_case c ON c.id = a.callback_case_id "
@@ -366,10 +377,16 @@ _ATTEMPT_SQL = (
 )
 
 
+def attempt_kind(transport: str, record_origin: str) -> Literal["CONTACT_ATTEMPT", "TEST_SESSION"]:
+    """D-48: every S1 browser session created by Call360 is a synthetic mock-provider test, not a customer contact."""
+    return "TEST_SESSION" if is_test_attempt(transport, record_origin) else "CONTACT_ATTEMPT"
+
+
 def _attempt(r: dict[str, Any]) -> AttemptOut:
     return AttemptOut(
-        **{k: r[k] for k in AttemptOut.model_fields if k not in {"case_id", "session"}},
+        **{k: r[k] for k in AttemptOut.model_fields if k not in {"case_id", "session", "attempt_kind"}},
         case_id=r["callback_case_id"],
+        attempt_kind=attempt_kind(r["transport"], r["record_origin"]),
         session=SessionLink(
             session_id=r["session_id"],
             session_ref=r["session_ref"],
@@ -567,34 +584,300 @@ def session_detail(
     )
 
 
-def _unavailable(session_id: uuid.UUID, what: str) -> Availability:
-    return Availability(
-        session_id=session_id, availability="NOT_AVAILABLE", reason="NO_CAPTURE_BEFORE_S1", message=UNAVAILABLE[what]
+TRANSCRIPT_MESSAGES = {
+    "CONSENT_DECLINED": "No transcript — recording consent was declined",
+    "NOT_RECORDED": "No transcript — the session was not recorded",
+    "RECORDING_IN_PROGRESS": "Transcript waits until the recording is finalised",
+    "NO_AUDIO_STORED": "No transcript — no audio was stored",
+    "PURGED": "Transcript text removed with the audio at local retention expiry",
+    "ENGINE_NOT_CONFIGURED": "Transcription is not configured on this server",
+    "QUEUED": "Transcription queued",
+    "TRANSCRIBING": "Transcribing on this server (local model)",
+    "TRACK_FAILED": "One track could not be transcribed",
+    "RECORDING_GAPS": "Transcribed; the recording has gaps, which are never transcribed or filled in",
+    "UNCERTAIN_SPEECH": "Transcribed; some speech is uncertain or was not recognised",
+    "PROCESSED": "Transcribed",
+}
+
+
+def _transcript_view(
+    request: Request, auth: AuthContext, s: dict[str, Any], session_id: uuid.UUID, db: Session
+) -> SessionTranscript:
+    configured = request.app.state.settings.transcription_model_dir is not None
+    o = transcript.overview(db, s["contact_attempt_id"], engine_configured=configured)
+    may_read = "transcript.sensitive.read" in auth.permissions
+    status, reason = o["status"], o["reason"]
+    if s["record_origin"] != "CALL360_RUNTIME":  # seeded S0 sessions never had capture
+        reason, message = "NO_CAPTURE_BEFORE_S1", UNAVAILABLE["transcript"]
+    else:
+        message = TRANSCRIPT_MESSAGES.get(reason, f"Transcription failed ({reason})")
+        message += " — machine transcript, not reviewed or certified" if status in ("COMPLETE", "PARTIAL") else ""
+    has_text = status in ("COMPLETE", "PARTIAL")
+    availability = (
+        ("AVAILABLE" if may_read else "RESTRICTED")
+        if has_text
+        else {"PENDING": "PENDING", "PROCESSING": "PENDING", "FAILED": "FAILED"}.get(status, "NOT_AVAILABLE")
+    )
+    if has_text and not may_read:
+        message += "; your role cannot read transcript text"
+    failed = any(t["run"] and t["run"]["status"] == "FAILED" for t in o["tracks"])
+    return SessionTranscript(
+        session_id=session_id,
+        availability=availability,
+        status=status,
+        reason=reason,
+        message=message,
+        session_transcript_status=s["transcript_status"],
+        review_status="NOT_REVIEWED",
+        uncertain=o["uncertain"],
+        language="en",
+        recording_status=o["recording_status"],
+        can_read_text=has_text and may_read,
+        can_retry=failed and may_read and configured,
+        tracks=o["tracks"],
     )
 
 
 @router.get(
-    "/sessions/{session_id}/transcript", response_model=Availability, operation_id="session_transcript", responses=_ERR
+    "/sessions/{session_id}/transcript",
+    response_model=SessionTranscript,
+    operation_id="session_transcript",
+    responses=_ERR,
 )
 def session_transcript(
     session_id: uuid.UUID,
     request: Request,
     auth: AuthContext = Depends(require("case.read")),
     db: Session = Depends(get_db),
-) -> Availability:
-    _session(db, request, auth, session_id)
-    return _unavailable(session_id, "transcript")
+) -> SessionTranscript:
+    """API-045 (S1-D): transcript status, provenance and counts for any reader of the case — never text."""
+    s = _session(db, request, auth, session_id)
+    return _transcript_view(request, auth, s, session_id, db)
 
 
-@router.get("/sessions/{session_id}/media", response_model=Availability, operation_id="session_media", responses=_ERR)
+@router.get(
+    "/sessions/{session_id}/transcript/segments",
+    response_model=TranscriptSegments,
+    operation_id="session_transcript_segments",
+    responses=_ERR,
+)
+def session_transcript_segments(
+    session_id: uuid.UUID,
+    request: Request,
+    auth: AuthContext = Depends(require("transcript.sensitive.read")),
+    db: Session = Depends(get_db),
+) -> TranscriptSegments:
+    """Machine transcript text with speaker, timeline and evidence-WAV times, uncertainty and provenance (D-50).
+    Every read is audited; text never appears in logs, events or error messages."""
+    s = _session(db, request, auth, session_id)
+    view = _transcript_view(request, auth, s, session_id, db)
+    out = transcript.segments(db, media.store_for(request.app), s["contact_attempt_id"])
+    write_audit(
+        db,
+        action="TRANSCRIPT.ACCESSED",
+        outcome="SUCCEEDED",
+        actor=auth.actor,
+        meta=request_meta(request),
+        entity_type="conversation_session",
+        entity_id=str(session_id),
+        after={
+            "case_ref": s["case_ref"],
+            "status": view.status,
+            "segments": len(out["segments"]),
+            "runs": [t.run.run_ref for t in view.tracks if t.run],
+            "text_sha256": [t.run.text_sha256 for t in view.tracks if t.run and t.run.text_sha256],
+        },
+    )
+    db.commit()
+    return TranscriptSegments(
+        session_id=session_id,
+        status=view.status,
+        review_status="NOT_REVIEWED",
+        segments=out["segments"],
+        problems=out["problems"],
+        timeline=RecordingTimeline(session_id=session_id, **out["timeline"]),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/transcript/retry",
+    response_model=TranscriptRetryOut,
+    operation_id="session_transcript_retry",
+    responses=_ERR,
+)
+@csrf_protected
+def session_transcript_retry(
+    session_id: uuid.UUID,
+    request: Request,
+    auth: AuthContext = Depends(require("transcript.sensitive.read")),
+    db: Session = Depends(get_db),
+) -> TranscriptRetryOut:
+    """Queue a new transcription revision for each track whose latest run FAILED. Idempotent: tracks that are
+    queued, processing or done are left alone. The failed revision stays as it is."""
+    from app.security import csrf as _csrf
+
+    settings = request.app.state.settings
+    _csrf.verify(
+        request, settings.csrf_secret.get_secret_value(), f"sid:{auth.session_id}", request.app.state.cookies.csrf
+    )
+    s = _session(db, request, auth, session_id)
+    try:
+        engine = transcript.engine_for(request.app)
+        queued = transcript.retry(
+            db, engine, media.store_for(request.app), settings, s["contact_attempt_id"], actor=str(auth.principal_id)
+        )
+    except transcript.TranscriptError as exc:
+        raise AppError(409, exc.code, exc.message) from exc
+    write_audit(
+        db,
+        action="TRANSCRIPT.RETRY_REQUESTED",
+        outcome="SUCCEEDED",
+        actor=auth.actor,
+        meta=request_meta(request),
+        entity_type="conversation_session",
+        entity_id=str(session_id),
+        after={"case_ref": s["case_ref"], "queued_tracks": queued},
+    )
+    db.commit()
+    view = _transcript_view(request, auth, _session(db, request, auth, session_id), session_id, db)
+    return TranscriptRetryOut(session_id=session_id, queued_tracks=queued, status=view.status)
+
+
+@router.get(
+    "/sessions/{session_id}/media/timeline",
+    response_model=RecordingTimeline,
+    operation_id="session_media_timeline",
+    responses=_ERR,
+)
+def session_media_timeline(
+    session_id: uuid.UUID,
+    request: Request,
+    auth: AuthContext = Depends(require("case.read")),
+    db: Session = Depends(get_db),
+) -> RecordingTimeline:
+    """Recording time ↔ evidence-WAV mapping for both tracks, with gaps as spans (metadata only, no audio)."""
+    s = _session(db, request, auth, session_id)
+    return RecordingTimeline(session_id=session_id, **transcript.timeline(db, s["contact_attempt_id"]))
+
+
+@router.get("/sessions/{session_id}/media", response_model=SessionMedia, operation_id="session_media", responses=_ERR)
 def session_media(
     session_id: uuid.UUID,
     request: Request,
     auth: AuthContext = Depends(require("case.read")),
     db: Session = Depends(get_db),
-) -> Availability:
-    _session(db, request, auth, session_id)
-    return _unavailable(session_id, "media")
+) -> SessionMedia:
+    """API-046 (S1-C): recording evidence metadata for any reader of the case; audio needs ``recording.read``."""
+    s = _session(db, request, auth, session_id)
+    rec = media.summary(db, s["contact_attempt_id"])
+    may_read = "recording.read" in auth.permissions
+    stored = any(t["media_status"] == "AVAILABLE" for t in rec["tracks"])
+    if stored:
+        availability, reason = ("AVAILABLE", "RECORDED") if may_read else ("RESTRICTED", "RECORDING_READ_REQUIRED")
+        message = (
+            "Recording stored"
+            + (" with gaps — see the manifest" if rec["status"] == "PARTIAL" else "")
+            + ("" if may_read else "; your role cannot retrieve recorded audio")
+        )
+    elif rec["status"] == "FAILED":
+        availability, reason, message = "FAILED", "CAPTURE_FAILED", "Recording consented but no audio was stored"
+    elif rec["status"] == "RECORDING":
+        availability, reason, message = "NOT_AVAILABLE", "IN_PROGRESS", "Recording in progress or finishing upload"
+    elif rec["status"] == "PURGED":
+        availability, reason, message = "NOT_AVAILABLE", "PURGED", "Audio removed at local retention expiry"
+    elif s["record_origin"] == "CALL360_RUNTIME":
+        availability, reason = "NOT_AVAILABLE", "NOT_RECORDED"
+        message = "Not recorded — recording consent was declined" if rec["consent"] == "DECLINED" else "Not recorded"
+    else:
+        availability, reason, message = "NOT_AVAILABLE", "NO_CAPTURE_BEFORE_S1", UNAVAILABLE["media"]
+    return SessionMedia(
+        session_id=session_id,
+        availability=availability,
+        reason=reason,
+        message=message,
+        media_status=s["media_status"],
+        recording=RecordingSummary(**rec),
+        can_retrieve_audio=stored and may_read,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/media/{track}/audio",
+    operation_id="session_media_audio",
+    responses={**_ERR, 200: {"content": {"audio/wav": {}}, "description": "WAV of the stored chunks, in order"}},
+    response_class=StreamingResponse,
+)
+def session_media_audio(
+    session_id: uuid.UUID,
+    track: Literal["MIC", "PROVIDER_PLAYBACK"],
+    request: Request,
+    purpose: Literal["DOWNLOAD", "PLAYBACK"] = "DOWNLOAD",
+    auth: AuthContext = Depends(require("recording.read")),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Audited retrieval of one recorded track (D-46). The WAV holds the stored chunks in order; gaps are listed in the
+    manifest and never filled. ``X-Call360-Content-SHA256`` equals the stored content checksum."""
+    s = _session(db, request, auth, session_id)
+    rs = media.store_for(request.app)
+    try:
+        out = media.audio_stream(db, rs, s["contact_attempt_id"], track) if rs is not None else None
+    except media.RecordingError as exc:  # stored audio no longer matches its checksum: refuse, and record that
+        write_audit(
+            db,
+            action="RECORDING.ACCESS_DENIED",
+            outcome="DENIED",
+            actor=auth.actor,
+            meta=request_meta(request),
+            entity_type="conversation_session",
+            entity_id=str(session_id),
+            after={"track": track, "reason": exc.code},
+        )
+        db.commit()
+        raise AppError(exc.status, exc.code, exc.message) from exc
+    if out is None:
+        write_audit(
+            db,
+            action="RECORDING.ACCESS_DENIED",
+            outcome="DENIED",
+            actor=auth.actor,
+            meta=request_meta(request),
+            entity_type="conversation_session",
+            entity_id=str(session_id),
+            after={"track": track, "reason": "no stored audio"},
+        )
+        db.commit()
+        raise AppError(404, "RECORDING_NOT_AVAILABLE", "No stored audio for this track")
+    asset, body = out
+    write_audit(
+        db,
+        action="RECORDING.ACCESSED",
+        outcome="SUCCEEDED",
+        actor=auth.actor,
+        meta=request_meta(request),
+        entity_type="conversation_session",
+        entity_id=str(session_id),
+        after={
+            "track": track,
+            "asset_ref": asset["asset_ref"],
+            "coverage": asset["coverage"],
+            "content_sha256": asset["content_sha256"],
+            "case_ref": s["case_ref"],
+            "purpose": purpose,
+        },
+    )
+    db.commit()
+    return StreamingResponse(
+        body,
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": f"{'inline' if purpose == 'PLAYBACK' else 'attachment'}; "
+            f'filename="{asset["asset_ref"]}.wav"',
+            "X-Call360-Content-SHA256": asset["content_sha256"],
+            "X-Call360-Manifest-SHA256": asset["manifest_sha256"],
+            "X-Call360-Coverage": asset["coverage"],
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---- API-047 ---------------------------------------------------------------------------------------------------

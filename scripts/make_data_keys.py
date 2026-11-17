@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = ("PII_ENCRYPTION_KEY", "PII_HMAC_KEY")
+RECORDING = "RECORDING_ENCRYPTION_KEY"  # S1-C (D-47): independent key for recorded audio objects
 
 
 def _key() -> str:
@@ -41,7 +42,15 @@ def main() -> int:
     lines = target.read_text().splitlines()
     present = {n for n in NAMES if any(line.startswith(f"{n}=") for line in lines)}
     if present == set(NAMES):
-        print(f"{target.name}: data-protection keys already present; left unchanged.")
+        if any(line.startswith(f"{RECORDING}=") for line in lines):
+            print(f"{target.name}: data-protection keys already present; left unchanged.")
+            return 0
+        with target.open("a") as fh:
+            if lines and lines[-1] != "":
+                fh.write("\n")
+            fh.write(f"{RECORDING}={_key()}\n")
+        target.chmod(0o600)
+        print(f"{target.name}: added {RECORDING} (value not shown; file mode 600); PII keys unchanged.")
         return 0
     if present:
         print(f"Refusing: {target.name} has only {sorted(present)}; fix the file by hand.")
@@ -49,7 +58,7 @@ def main() -> int:
     with target.open("a") as fh:
         if lines and lines[-1] != "":
             fh.write("\n")
-        for name in NAMES:
+        for name in (*NAMES, RECORDING):
             fh.write(f"{name}={_key()}\n")
     target.chmod(0o600)
     print(f"{target.name}: added {', '.join(NAMES)} (values not shown; file mode 600).")

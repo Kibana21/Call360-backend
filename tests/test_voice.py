@@ -139,7 +139,8 @@ def test_session_creation_rules(client: TestClient, user: Account, db: Session, 
         "NOT_PERFORMED",
         "NOT_EVALUATED",
     )
-    assert s["recording"] == "DISABLED" and s["transcript"] == "NOT_AVAILABLE" and s["script"]["status"] == "PUBLISHED"
+    assert s["recording_consent"] == "DECLINED" and s["transcript"] == "NOT_AVAILABLE"  # S1-C default: not recorded
+    assert s["script"]["status"] == "PUBLISHED"
     assert len(s["credential"]) >= 40 and s["stream_path"].endswith(f"{s['session_id']}/stream")
     assert "•" in (s["contact"]["masked_contact"] or "")  # masked contact only; no raw value
     held = conn.execute(
@@ -157,7 +158,7 @@ def test_session_creation_rules(client: TestClient, user: Account, db: Session, 
     assert client.post("/api/v1/voice/sessions", json={"case_id": str(case_id)}).status_code == 403  # CSRF
     pre = client.get("/api/v1/voice/preflight").json()
     assert pre["status"] == "AVAILABLE" and pre["provider"] == "MOCK" and pre["callable_cases"]
-    assert {c["code"]: c["status"] for c in pre["capabilities"]}["RECORDING"] == "DISABLED"
+    assert {c["code"]: c["status"] for c in pre["capabilities"]}["RECORDING"] == "AVAILABLE"  # S1-C, consent-gated
     client.cookies.clear()
     norole = make_account(db, "LOCAL_USER_SG", prefix="novoice")
     db.execute(text("UPDATE group_membership SET valid_to = now() WHERE principal_id = :p"), {"p": norole.principal_id})

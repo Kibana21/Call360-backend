@@ -11,8 +11,9 @@ Lifecycle (one browser test session = one ``contact_attempt``, transport BROWSER
 Every step appends to ``session_event`` (server ``seq`` per attempt; client events de-duplicated by their event ID and
 flagged when they arrive out of order) and the case timeline gets ``VOICE_SESSION_STARTED`` / ``VOICE_SESSION_ENDED``.
 Session pins (script version + manifest, decided risk assessment + hash, fact snapshot + hash, contacted party and
-masked contact) are fixed at connection by the existing guard. Nothing here stores audio, transcript text or
-microphone content, and nothing changes the case state or verifies anyone.
+masked contact) are fixed at connection by the existing guard. The ledger never holds audio, transcript text or
+microphone content (consent-gated recording, S1-C, lives in ``app.voice.media``), and nothing changes the case state
+or verifies anyone.
 """
 
 from __future__ import annotations
@@ -288,7 +289,6 @@ def connect(db: Session, attempt_id: uuid.UUID, *, actor: str, provider: str) ->
                 "model": f"{provider.lower()}-fixed-message-v1",
                 "identity_verification": "NOT_PERFORMED",
                 "compliance_outcome": "NOT_EVALUATED",
-                "recording": "DISABLED",
             },
         )
         _case_event(
@@ -338,8 +338,10 @@ def finalize(
     reason: str,
     stats: dict[str, Any] | None = None,
     source: str = "SERVER",
+    media_store: Any = None,
 ) -> dict[str, Any]:
-    """End the session once. Repeated calls return the existing final state (idempotent Stop)."""
+    """End the session once. Repeated calls return the existing final state (idempotent Stop). A recording (S1-C)
+    stops capturing and waits for its last uploads (``app.voice.media``)."""
     st = state_of(db, attempt_id)
     if st is None:
         raise TransitionError("unknown attempt")
@@ -376,6 +378,9 @@ def finalize(
     )
     if reason == "ABANDONED":
         append_event(db, attempt_id, "ABANDONED", source="SYSTEM", actor=actor, details={"reason": reason})
+    from app.voice import media  # late import: media builds on this module
+
+    recording = media.summary(db, attempt_id)["status"]
     append_event(
         db,
         attempt_id,
@@ -388,20 +393,31 @@ def finalize(
             **(stats or {}),
             "identity_verification": "NOT_PERFORMED",
             "compliance_outcome": "NOT_EVALUATED",
+            "recording": "CAPTURE_ENDED" if recording == "RECORDING" else recording,
         },
     )
+    media.on_session_end(db, media_store, attempt_id, actor=actor)
     _case_event(
         db,
         st["callback_case_id"],
         "VOICE_SESSION_ENDED",
         actor,
         attempt_id,
-        f"Browser voice test session {st['session_ref']} {final.lower()} ({reason}); nothing recorded or verified",
+        f"Browser voice test session {st['session_ref']} {final.lower()} ({reason}); "
+        + ("recorded with consent (synthetic test); " if recording != "NOT_RECORDED" else "not recorded; ")
+        + "nothing verified",
     )
     return {"state": final, "already_final": False}
 
 
-def sweep(db: Session, *, live: set[uuid.UUID], now: datetime | None = None, startup: bool = False) -> list[str]:
+def sweep(
+    db: Session,
+    *,
+    live: set[uuid.UUID],
+    now: datetime | None = None,
+    startup: bool = False,
+    media_store: Any = None,
+) -> list[str]:
     """Finalise sessions that can no longer continue: never connected in time, interrupted beyond the resume grace,
     or marked live with no live connection in this process (``startup``: after a backend restart, all of them)."""
     now = now or datetime.now(UTC)
@@ -433,6 +449,6 @@ def sweep(db: Session, *, live: set[uuid.UUID], now: datetime | None = None, sta
             reason = "ORPHANED"
         else:
             continue
-        finalize(db, r["id"], actor="SYSTEM:voice-sweeper", reason=reason, source="SYSTEM")
+        finalize(db, r["id"], actor="SYSTEM:voice-sweeper", reason=reason, source="SYSTEM", media_store=media_store)
         done.append(f"{r['id']}:{reason}")
     return done
