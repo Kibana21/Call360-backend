@@ -57,6 +57,7 @@ from app.api.schemas import (
 )
 from app.audit.chain import write_audit
 from app.core.errors import AppError
+from app.domain import script_authoring
 from app.domain.kpis import breached, is_test_attempt, load_facts, sla_exempt
 from app.domain.outcomes import applicable_mandatory, controls_satisfied, derive_outcomes, question_satisfied
 from app.security.authz import AuthContext, get_db, request_meta, require
@@ -1002,20 +1003,89 @@ def script_version_detail(
     controls: dict[uuid.UUID, list[dict[str, Any]]] = {}
     for cm in db.execute(
         text(
-            "SELECT cm.question_bank_item_id, ct.control_code, ct.name, ct.owner_role, cm.rationale, cm.status, "
+            "SELECT cm.question_bank_item_id, ct.id AS control_id, ct.control_code, ct.name, ct.owner_role, "
+            "cm.rationale, cm.status, rr.id AS regulatory_reference_id, "
             "rr.issuer, rr.title, rr.document_version, rr.interpretation_status FROM control_mapping cm "
             "JOIN control ct ON ct.id = cm.control_id LEFT JOIN regulatory_reference rr "
-            "ON rr.id = cm.regulatory_reference_id AND rr.market_code = ANY(:m) ORDER BY ct.control_code"
+            "ON rr.id = cm.regulatory_reference_id AND rr.market_code = ANY(:m) WHERE cm.status <> 'RETIRED' "
+            "ORDER BY ct.control_code"
         ),
         {"m": sorted(auth.markets)},  # F6: regulatory references only from the caller's markets (D-39)
     ).mappings():
         controls.setdefault(cm["question_bank_item_id"], []).append(
             {k: cm[k] for k in cm.keys() if k != "question_bank_item_id"}
         )
+    # S2-A manifests freeze each question's control links; published content shows those, not the live mappings.
+    frozen: dict[str, list[dict[str, Any]]] | None = None
+    own_links = v["status"] in ("DRAFT", "ABANDONED") or (
+        v["source_system"] == script_authoring.SOURCE_SYSTEM
+        and (v["manifest"] or {}).get("schema") != script_authoring.MANIFEST_SCHEMA
+    )
+    if own_links:  # S2-A.1: a draft shows only its own control links, never another draft's or the library's
+        controls = {}
+        rows = script_authoring.link_rows(db, v, source="ROWS")
+        ctl_rows = {
+            r["id"]: r
+            for r in db.execute(
+                text("SELECT id, control_code, name, owner_role FROM control WHERE id = ANY(:c)"),
+                {"c": [r["control_id"] for r in rows]},
+            ).mappings()
+        }
+        ref_rows = {
+            r["id"]: r
+            for r in db.execute(
+                text(
+                    "SELECT id, issuer, title, document_version, interpretation_status FROM regulatory_reference "
+                    "WHERE id = ANY(:r) AND market_code = ANY(:m)"
+                ),
+                {"r": [r["ref_id"] for r in rows if r["ref_id"]], "m": sorted(auth.markets)},
+            ).mappings()
+        }
+        for r in sorted(rows, key=lambda x: ctl_rows[x["control_id"]]["control_code"]):
+            ct, rr = ctl_rows[r["control_id"]], ref_rows.get(r["ref_id"]) if r["ref_id"] else None
+            controls.setdefault(r["item_id"], []).append(
+                {
+                    "control_id": ct["id"],
+                    "control_code": ct["control_code"],
+                    "name": ct["name"],
+                    "owner_role": ct["owner_role"],
+                    "rationale": r["rationale"],
+                    "status": r["status"],
+                    "regulatory_reference_id": rr["id"] if rr else None,
+                    "issuer": rr["issuer"] if rr else None,
+                    "title": rr["title"] if rr else None,
+                    "document_version": rr["document_version"] if rr else None,
+                    "interpretation_status": rr["interpretation_status"] if rr else None,
+                }
+            )
+    elif v["status"] != "DRAFT" and (v["manifest"] or {}).get("schema") == script_authoring.MANIFEST_SCHEMA:
+        frozen = {
+            q["question_revision_id"]: [
+                {
+                    "control_code": c["control_code"],
+                    "name": c["control_name"],
+                    "rationale": c["rationale"],
+                    "status": c["mapping_status"],
+                    **(
+                        {
+                            "title": c["regulatory_reference"]["title"],
+                            "document_version": c["regulatory_reference"]["document_version"],
+                            "interpretation_status": c["regulatory_reference"]["interpretation_status"],
+                        }
+                        if c["regulatory_reference"]
+                        else {}
+                    ),
+                }
+                for c in q["controls"]
+            ]
+            for sec in v["manifest"]["sections"]
+            for q in sec["questions"]
+        }
     sections = []
     for sec in db.execute(
         text(
-            "SELECT ss.position, ss.inclusion_condition, m.id AS module_id, m.code, m.name, m.kind "
+            "SELECT ss.id AS section_id, ss.position, ss.inclusion_condition, m.id AS module_id, m.code, m.name, "
+            "m.kind, m.revision AS module_revision, m.status AS module_status "
             "FROM script_section ss JOIN script_module m ON m.id = ss.script_module_id "
             "WHERE ss.script_version_id = :v ORDER BY ss.position"
         ),
@@ -1024,9 +1094,12 @@ def script_version_detail(
         qs = []
         for q in db.execute(
             text(
-                "SELECT mq.position, mq.branch_condition, qbi.id AS item_id, qbi.question_code, qbi.intent, qr.* "
+                "SELECT mq.id AS module_question_id, mq.position, mq.branch_condition, qbi.id AS item_id, "
+                "qbi.id AS question_bank_item_id, qbi.question_code, coalesce(d.intent, qbi.intent) AS intent, "
+                "coalesce(d.category, qbi.category) AS category, qr.* "
                 "FROM module_question mq JOIN question_revision qr ON qr.id = mq.question_revision_id "
                 "JOIN question_bank_item qbi ON qbi.id = qr.question_bank_item_id "
+                "LEFT JOIN question_revision_detail d ON d.question_revision_id = qr.id "
                 "WHERE mq.script_module_id = :m ORDER BY mq.position"
             ),
             {"m": sec["module_id"]},
@@ -1034,7 +1107,7 @@ def script_version_detail(
             qs.append(
                 ScriptQuestionOut(
                     wording=q["customer_wording"],
-                    controls=controls.get(q["item_id"], []),
+                    controls=frozen.get(str(q["id"]), []) if frozen is not None else controls.get(q["item_id"], []),
                     **{k: q[k] for k in ScriptQuestionOut.model_fields if k not in {"wording", "controls"}},
                 )
             )
@@ -1046,10 +1119,48 @@ def script_version_detail(
                 module_kind=sec["kind"],
                 inclusion_condition=sec["inclusion_condition"],
                 questions=qs,
+                section_id=sec["section_id"],
+                module_id=sec["module_id"],
+                module_revision=sec["module_revision"],
+                module_status=sec["module_status"],
             )
         )
+    base = (
+        _one(db, "SELECT version_label FROM script_version WHERE id = :i", i=v["supersedes_id"])
+        if v["supersedes_id"]
+        else None
+    )
+    makers = sorted(script_authoring.makers(db, script_version_id, v["author_ref"]))
+    refs = {r for r in [v["author_ref"], v["reviewer_ref"], *makers] if r}
+    people: dict[str, str] = {}
+    for r in refs:
+        try:
+            pid = uuid.UUID(r)
+        except ValueError:
+            continue
+        name = db.execute(text("SELECT display_name FROM principal WHERE id = :i"), {"i": pid}).scalar()
+        if name:
+            people[r] = name
+    extra = {
+        "row_version",
+        "supersedes_id",
+        "supersedes_label",
+        "makers",
+        "controls_source",
+        "people",
+        "unmapped_mandatory",
+        "market",
+        "sections",
+    }
     return ScriptVersionDetail(
-        **{k: v[k] for k in ScriptVersionDetail.model_fields if k not in {"market", "sections"}},
+        **{k: v[k] for k in ScriptVersionDetail.model_fields if k not in extra},
         market=v["market_code"],
         sections=sections,
+        row_version=v["row_version"],
+        supersedes_id=v["supersedes_id"],
+        supersedes_label=base["version_label"] if base else None,
+        makers=makers,
+        people=people,
+        controls_source="MANIFEST" if frozen is not None else ("DRAFT" if own_links else "LIVE"),
+        unmapped_mandatory=[q.question_code for s in sections for q in s.questions if q.mandatory and not q.controls],
     )

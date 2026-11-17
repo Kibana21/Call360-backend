@@ -316,7 +316,7 @@ def test_be_cfg_03_migration_preserves_cp01a_data(
     assert assert_audit_append_only(audit_before, audit_rows(engine)) == {
         "CONFIG.CODE_LIST_VERSION_REMOVED": 9,
         "CONFIG.CODE_LIST_VERSION_ACTIVATED": 9,
-        "ADMIN.GROUP_MAPPING_CHANGED": 4,
+        "ADMIN.GROUP_MAPPING_CHANGED": 6,  # 2 seeded + 1 S2-A checker scope mapping, removed and re-added
     }
     assert db.execute(select(func.count()).select_from(CodeList)).scalar_one() == 10
 

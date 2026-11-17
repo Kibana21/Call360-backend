@@ -13,6 +13,7 @@ from app.api import (
     admin,
     admin_access,
     admin_config,
+    assignment_rules,
     auth,
     case_detail,
     cases,
@@ -23,6 +24,8 @@ from app.api import (
     policies,
     reviews,
     risk,
+    script_assignments,
+    script_authoring,
     scripts,
     search,
     voice,
@@ -60,7 +63,7 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0014_transcript"
+MIGRATION_HEAD = "0018_script_assignment_engine"
 ROUTERS = (
     health.router,
     auth.router,
@@ -73,6 +76,9 @@ ROUTERS = (
     search.router,
     case_detail.router,
     scripts.router,
+    script_authoring.router,
+    assignment_rules.router,
+    script_assignments.router,
     reviews.router,
     voice.router,
     policies.router,

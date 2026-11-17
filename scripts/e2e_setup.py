@@ -27,6 +27,7 @@ ACCOUNTS = [
     ("e2e.user", "E2E Operations User", "LOCAL_USER_SG"),
     ("e2e.victim", "E2E Disable Target", "LOCAL_USER_SG"),
     ("e2e.tabs", "E2E Multi Tab", "LOCAL_USER_SG"),
+    ("e2e.checker", "E2E S&C Checker", "LOCAL_SC_CHECKER_SG"),  # S2-A maker-checker
 ]
 
 

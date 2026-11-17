@@ -582,6 +582,24 @@ class _Seeder:
                     rationale="Synthetic mapping for S0 display; not an approved control interpretation",
                     status="PROPOSED",
                 )
+        # S2-A.1: a draft owns its control links. Seeded drafts get their own copy of the concept-level links they
+        # show (as migration 0016 does for drafts that already existed); outside the seed content digest.
+        sch = self.schema
+        self.conn.execute(
+            text(
+                f"INSERT INTO {sch}.script_version_control_link (id, script_version_id, question_bank_item_id, "
+                "control_id, regulatory_reference_id, rationale, status, copied_from, created_by, source_type, "
+                "source_system, source_reference, source_observed_at, recorded_at, is_synthetic) "
+                "SELECT gen_random_uuid(), x.vid, cm.question_bank_item_id, cm.control_id, cm.regulatory_reference_id, "
+                "cm.rationale, 'PROPOSED', 'CONCEPT_LIBRARY', 'SYSTEM:seed', 'SEED', 'CALL360_SYNTHETIC_SEED', "
+                "'seed:draft-control-links', now(), now(), true FROM (SELECT DISTINCT v.id AS vid, "
+                f"qr.question_bank_item_id FROM {sch}.script_version v JOIN {sch}.script_section ss "
+                f"ON ss.script_version_id = v.id JOIN {sch}.module_question mq ON mq.script_module_id = "
+                f"ss.script_module_id JOIN {sch}.question_revision qr ON qr.id = mq.question_revision_id "
+                f"WHERE v.status = 'DRAFT') x JOIN {sch}.control_mapping cm ON cm.question_bank_item_id = "
+                "x.question_bank_item_id AND cm.status <> 'RETIRED'"
+            )
+        )
 
     def _script_version(
         self,

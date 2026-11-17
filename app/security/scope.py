@@ -23,6 +23,7 @@ ENABLED_MARKETS = frozenset({"SG"})  # D-39. Multi-market enablement is a later,
 
 # Seeded mappings (no administration UI or API in Stage 0). LOCAL_USER_MY maps no market.
 SEEDED_MAPPINGS = (("LOCAL_ADMIN", "SG"), ("LOCAL_USER_SG", "SG"))
+CHECKER_MAPPINGS = (("LOCAL_SC_CHECKER_SG", "SG"),)  # S2-A (migration 0015, D-54)
 NOT_FOUND_MESSAGE = "Not found or not available to you"
 
 
@@ -124,9 +125,9 @@ def _audit(conn: Connection, group: str, market: str, change: str) -> None:
     )
 
 
-def seed_scope(conn: Connection, schema: str) -> None:
+def seed_scope(conn: Connection, schema: str, mappings: tuple[tuple[str, str], ...] = SEEDED_MAPPINGS) -> None:
     assert schema in {"call360", "call360_test"}, schema
-    for group, market in SEEDED_MAPPINGS:
+    for group, market in mappings:
         mid = mapping_id(group, market)
         conn.execute(
             text(
@@ -140,8 +141,8 @@ def seed_scope(conn: Connection, schema: str) -> None:
             _audit(conn, group, market, ADDED)
 
 
-def audit_scope_removal(conn: Connection, schema: str) -> None:
+def audit_scope_removal(conn: Connection, schema: str, mappings: tuple[tuple[str, str], ...] = SEEDED_MAPPINGS) -> None:
     assert schema in {"call360", "call360_test"}, schema
-    for group, market in SEEDED_MAPPINGS:
+    for group, market in mappings:
         if _latest(conn, schema, mapping_id(group, market)) == ADDED:
             _audit(conn, group, market, REMOVED)

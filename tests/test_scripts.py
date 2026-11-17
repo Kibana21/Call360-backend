@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.api.scripts import content_tags
 from tests.domain_support import SCHEMA
-from tests.support import Account, login, make_account
+from tests.support import Account, csrf_header, login, make_account
 
 pytestmark = pytest.mark.usefixtures("seeded")
 
@@ -38,17 +38,18 @@ def signed_in(client: TestClient, user: Account) -> TestClient:
 
 def family_id(conn: Connection, market: str) -> uuid.UUID:
     return conn.execute(
-        text(f"SELECT id FROM {SCHEMA}.script_family WHERE market_code = :m"), {"m": market}
+        text(f"SELECT id FROM {SCHEMA}.script_family WHERE code = :c"), {"c": f"SALES_VERIFICATION_{market}"}
     ).scalar_one()
 
 
 def test_library_lists_singapore_versions_with_structure_and_history(signed_in: TestClient, conn: Connection) -> None:
-    body = get(signed_in, "/api/v1/scripts")
+    # S2-A: authored families may exist beside the seeded one; these checks address the seeded family.
+    body = get(signed_in, "/api/v1/scripts", q="SALES_VERIFICATION_SG")
     assert body["markets"] == ["SG"] and {v["market"] for v in body["items"]} == {"SG"}
     expected = conn.execute(
         text(
             f"SELECT count(*) FROM {SCHEMA}.script_version v JOIN {SCHEMA}.script_family f "
-            "ON f.id = v.script_family_id WHERE f.market_code = 'SG'"
+            "ON f.id = v.script_family_id WHERE f.code = 'SALES_VERIFICATION_SG'"
         )
     ).scalar_one()
     assert body["total"] == len(body["items"]) == expected
@@ -74,17 +75,26 @@ def test_library_lists_singapore_versions_with_structure_and_history(signed_in: 
         ).scalar_one()
         assert v["cases_assigned"] == assigned, v["version_label"]
     assert by_label["1.1"]["rules_targeting"] == ["SG-SALES-VERIFY v2"]
-    assert body["facets"]["status"]["PUBLISHED"] == 1 and "MY" not in json.dumps(body["facets"])
+    published = conn.execute(
+        text(
+            f"SELECT count(*) FROM {SCHEMA}.script_version v JOIN {SCHEMA}.script_family f "
+            "ON f.id = v.script_family_id WHERE f.market_code = 'SG' AND v.status = 'PUBLISHED'"
+        )
+    ).scalar_one()
+    assert body["facets"]["status"]["PUBLISHED"] == published and "MY" not in json.dumps(body["facets"])
 
 
 def test_library_filters(signed_in: TestClient) -> None:
-    labels = lambda **p: [v["version_label"] for v in get(signed_in, "/api/v1/scripts", **p)["items"]]  # noqa: E731
+    def labels(**p: Any) -> list[str]:  # the seeded family (S2-A may have added authored families)
+        p.setdefault("q", "SALES_VERIFICATION_SG")
+        return [v["version_label"] for v in get(signed_in, "/api/v1/scripts", **p)["items"]]
+
     assert labels(status="PUBLISHED") == ["1.1"]
     assert labels(status=["DRAFT", "WITHDRAWN"]) == ["0.9", "1.2"]
     assert labels(effective_on="2026-03-01") == ["1.0"]
     assert len(labels(product_family="ILP")) == 4 and len(labels(risk_band="HIGH")) == 4
     assert labels(channel="AGENCY") == []  # no seeded module is channel-specific
-    assert labels(language="en", q="ELEVATED_RISK") == labels()
+    assert [x for x in labels(language="en", q="ELEVATED_RISK") if x in labels()] == labels()
     assert labels(market_code="MY") == []  # outside the caller's scope: nothing, not an error
     assert signed_in.get("/api/v1/scripts", params={"status": "LIVE"}).status_code == 422
 
@@ -170,7 +180,7 @@ def test_controls_and_regulatory_references(signed_in: TestClient) -> None:
     assert [c["control_code"] for c in controls] == sorted(c["control_code"] for c in controls)
     assert all(c["content_approval_status"] == "SYNTHETIC_UNAPPROVED" for c in controls)
     links = [q for c in controls for q in c["questions"]]
-    assert links and all(v.startswith("SALES_VERIFICATION_SG v") for q in links for v in q["script_versions"])
+    assert links and not any(v.startswith("SALES_VERIFICATION_MY") for q in links for v in q["script_versions"])
     assert {q["regulatory_reference_id"] for q in links} - {None} == {r["id"] for r in refs}
     assert set(refs[0]["controls"]) <= {c["control_code"] for c in controls}
 
@@ -198,4 +208,6 @@ def test_permissions_and_read_only(client: TestClient, db: Session, conn: Connec
     assert get(client, "/api/v1/scripts")["total"] == 0
     assert get(client, "/api/v1/script-assignment-rules")["total"] == 0
     assert client.get(f"/api/v1/scripts/{fid}").status_code == 404
-    assert client.post("/api/v1/scripts", json={}).status_code in (403, 405)  # no write route in S0
+    # S2-A: authoring exists, but never outside the caller's markets.
+    r = client.post("/api/v1/scripts", json={"code": "S2A_NOMKT", "name": "No market"}, headers=csrf_header(client))
+    assert r.status_code == 403 and r.json()["code"] == "MARKET_NOT_IN_SCOPE"

@@ -53,6 +53,16 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
     "0012_session_event": ("session_event",),  # S1-B voice-session event ledger (EVD-002)
     "0013_recording": ("media_asset", "media_chunk"),  # S1-C recording manifest (EVD-001, EVD-003)
     "0014_transcript": ("transcript_run", "transcript_segment"),  # S1-D machine transcripts (VOICE-009, EVD-004)
+    "0015_script_authoring": ("script_change_event",),  # S2-A script change history (SUR-006, SCR-014, SCR-015)
+    # S2-A.1 draft isolation: per-revision intent/category and draft-scoped control links
+    "0016_script_draft_isolation": ("question_revision_detail", "script_version_control_link"),
+    # S2-B editable assignment rules (SCR-011): drafts, change history, publication records
+    "0017_assignment_rule_authoring": (
+        "assignment_rule_draft",
+        "assignment_rule_change_event",
+        "assignment_rule_publication",
+    ),
+    "0018_script_assignment_engine": ("script_assignment_attempt",),  # S2-C assignment evidence (SCR-004/011)
 }
 DEFERRED_TABLES = frozenset({"risk_override", "review_decision"})  # media_asset: S1-C; transcript_segment: S1-D
 

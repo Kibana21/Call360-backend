@@ -34,6 +34,8 @@ _OUT_OF_SCOPE_ENTITY = """(
      JOIN script_family f ON f.id = v.script_family_id
      WHERE (CAST(v.id AS text) = audit_event.entity_id OR CAST(f.id AS text) = audit_event.entity_id)
        AND f.market_code <> ALL(:scope_markets)))
+  OR (audit_event.entity_type = 'assignment_rule_draft' AND EXISTS (SELECT 1 FROM assignment_rule_draft d
+     WHERE CAST(d.id AS text) = audit_event.entity_id AND d.market_code <> ALL(:scope_markets)))
 )"""
 
 # The payload names an out-of-scope policy, sale or case reference.

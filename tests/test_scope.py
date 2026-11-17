@@ -27,7 +27,8 @@ def test_seeded_mappings_are_singapore_only(conn: Connection) -> None:
             f"JOIN {SCHEMA}.app_group g ON g.id = m.group_id ORDER BY g.code"
         )
     ).all()
-    assert [tuple(r) for r in rows] == [("LOCAL_ADMIN", "SG"), ("LOCAL_USER_SG", "SG")]
+    # S2-A (0015) adds the S&C script checker group, also Singapore-only.
+    assert [tuple(r) for r in rows] == [("LOCAL_ADMIN", "SG"), ("LOCAL_SC_CHECKER_SG", "SG"), ("LOCAL_USER_SG", "SG")]
     assert ENABLED_MARKETS == {"SG"}
     events = conn.execute(
         text(

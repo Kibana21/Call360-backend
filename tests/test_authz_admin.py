@@ -132,6 +132,46 @@ def test_be_sec_01_exact_api_surface(app) -> None:  # type: ignore[no-untyped-de
         ("GET", "/api/v1/sessions/{session_id}/media/timeline"),  # S1-D
         ("GET", "/api/v1/sessions/{session_id}/transcript/segments"),
         ("POST", "/api/v1/sessions/{session_id}/transcript/retry"),
+        ("POST", "/api/v1/scripts"),  # S2-A Script Studio authoring
+        ("POST", "/api/v1/scripts/{script_family_id}/drafts"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/sections"),
+        ("PATCH", "/api/v1/script-versions/{script_version_id}/sections/{section_id}"),
+        ("DELETE", "/api/v1/script-versions/{script_version_id}/sections/{section_id}"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/sections/reorder"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/sections/{section_id}/questions"),
+        ("PUT", "/api/v1/script-versions/{script_version_id}/sections/{section_id}/questions/{module_question_id}"),
+        ("DELETE", "/api/v1/script-versions/{script_version_id}/sections/{section_id}/questions/{module_question_id}"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/sections/{section_id}/questions/reorder"),
+        ("PUT", "/api/v1/script-versions/{script_version_id}/questions/{question_code}/controls"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/validate"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/submit"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/review"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/publish"),
+        ("POST", "/api/v1/script-versions/{script_version_id}/abandon"),
+        ("GET", "/api/v1/script-versions/{script_version_id}/history"),
+        ("GET", "/api/v1/script-versions/{script_version_id}/diff"),
+        ("GET", "/api/v1/question-bank"),
+        ("GET", "/api/v1/script-authoring/options"),
+        # S2-B editable assignment rules (SCR-011)
+        ("GET", "/api/v1/assignment-rules/options"),
+        ("GET", "/api/v1/assignment-rules"),
+        ("POST", "/api/v1/assignment-rules"),
+        ("POST", "/api/v1/assignment-rules/explain"),
+        ("POST", "/api/v1/assignment-rules/simulate"),
+        ("POST", "/api/v1/assignment-rules/{rule_code}/drafts"),
+        ("GET", "/api/v1/assignment-rules/{rule_code}/history"),
+        ("GET", "/api/v1/assignment-rules/{rule_code}/diff"),
+        ("GET", "/api/v1/assignment-rule-drafts/{draft_id}"),
+        ("PUT", "/api/v1/assignment-rule-drafts/{draft_id}"),
+        ("POST", "/api/v1/assignment-rule-drafts/{draft_id}/validate"),
+        ("POST", "/api/v1/assignment-rule-drafts/{draft_id}/submit"),
+        ("POST", "/api/v1/assignment-rule-drafts/{draft_id}/abandon"),
+        ("POST", "/api/v1/assignment-rule-drafts/{draft_id}/review"),
+        ("POST", "/api/v1/assignment-rule-drafts/{draft_id}/publish"),
+        # S2-C deterministic script assignment
+        ("GET", "/api/v1/cases/{case_id}/script-assignment/preview"),
+        ("POST", "/api/v1/cases/{case_id}/script-assignment/apply"),
+        ("POST", "/api/v1/script-assignments/run"),
         # CP0.4a manual intake (API-080, API-082…085)
         ("GET", "/api/v1/intake/sources"),
         ("GET", "/api/v1/intake/reference"),  # API-087 (CP0.4b)
@@ -366,13 +406,31 @@ def test_be_iam_02_group_role_mapping_and_unmapped_group(db: Session, user: Acco
 def test_be_iam_03_reserved_permissions_never_granted(db: Session) -> None:
     reserved = db.execute(select(Permission).where(Permission.reserved.is_(True))).scalars().all()
     assert {p.code for p in reserved} >= {
-        "script.approve",
         "risk.override.approve",
         "evidence.export",
         "pii.unmasked",
     }
     # S1-C (D-46) recording.read and S1-D (D-50) transcript.sensitive.read are activated for USER only; ADMIN keeps
     # the ADR-0004 segregation.
+    # S2-A (D-54): script.edit for USER; script.approve and script.publish only for the S&C checker role.
+    held = {
+        code: sorted(
+            db.execute(
+                text(
+                    "SELECT r.code FROM role_permission rp JOIN role r ON r.id = rp.role_id JOIN permission p "
+                    "ON p.id = rp.permission_id WHERE p.code = :c"
+                ),
+                {"c": code},
+            ).scalars()
+        )
+        for code in ("script.edit", "script.approve", "script.publish", "script.assign")
+    }
+    assert held == {
+        "script.edit": ["USER"],
+        "script.approve": ["SC_CHECKER"],
+        "script.publish": ["SC_CHECKER"],
+        "script.assign": ["USER"],  # S2-C: operations apply deterministic assignment; ADMIN and the checker do not
+    }
     for code in ("recording.read", "transcript.sensitive.read"):
         assert code not in {p.code for p in reserved}
         holders = db.execute(

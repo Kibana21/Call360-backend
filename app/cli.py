@@ -170,7 +170,11 @@ def main(argv: list[str] | None = None) -> int:
             help="environment variable holding the password (removed after reading)",
         )
         if needs_group:
-            p.add_argument("--group", required=True, choices=["LOCAL_ADMIN", "LOCAL_USER_SG", "LOCAL_USER_MY"])
+            p.add_argument(
+                "--group",
+                required=True,
+                choices=["LOCAL_ADMIN", "LOCAL_USER_SG", "LOCAL_USER_MY", "LOCAL_SC_CHECKER_SG"],
+            )
         p.set_defaults(func=func)
 
     verify = sub.add_parser("audit-verify")

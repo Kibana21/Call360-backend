@@ -97,7 +97,12 @@ def test_module_questions_frozen_once_module_published(conn: Connection) -> None
         UPD + "manifest = '{}', manifest_sha256 = repeat('c', 64), validation_status = 'VALID', "
         "status = 'SUBMITTED_FOR_REVIEW' WHERE id = :i"
     )
-    assert rejected(conn, sql, {"i": draft}) == CHECK  # module still DRAFT
+    # S2-A (0015): a draft may be submitted and approved with its own DRAFT modules (the checker reviews them before
+    # anything is published), but it cannot be PUBLISHED until every module is.
+    conn.execute(text(sql), {"i": draft})
+    conn.execute(text(UPD + "status = 'APPROVED', reviewer_ref = 'SYNTHETIC-REVIEWER-02' WHERE id = :i"), {"i": draft})
+    publish = UPD + "status = 'PUBLISHED', published_at = now(), effective_from = now() WHERE id = :i"
+    assert rejected(conn, publish, {"i": draft}) == CHECK  # module still DRAFT
 
 
 def test_d32_validity_uses_history_not_current_status(conn: Connection) -> None:

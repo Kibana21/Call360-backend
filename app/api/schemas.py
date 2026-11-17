@@ -1128,6 +1128,14 @@ class ScriptQuestionOut(BaseModel):
     branch_condition: Any
     controls: list[dict[str, Any]]
     content_approval_status: str
+    # S2-A authoring addresses (stable row ids) and the remaining question fields
+    module_question_id: uuid.UUID
+    question_bank_item_id: uuid.UUID
+    category: str
+    answer_schema: Any
+    evidence_required: bool
+    max_reprompts: int
+    escalation_rule_ref: str | None
 
 
 class ScriptSectionOut(BaseModel):
@@ -1137,6 +1145,10 @@ class ScriptSectionOut(BaseModel):
     module_kind: str
     inclusion_condition: Any
     questions: list[ScriptQuestionOut]
+    section_id: uuid.UUID
+    module_id: uuid.UUID
+    module_revision: int
+    module_status: str
 
 
 class ScriptVersionDetail(BaseModel):
@@ -1157,6 +1169,18 @@ class ScriptVersionDetail(BaseModel):
     published_at: datetime | None
     content_approval_status: str
     sections: list[ScriptSectionOut]
+    # S2-A: optimistic-concurrency token of a draft, its base version and everyone who changed it (makers may not
+    # approve or publish it). ``controls_source`` says whether controls come from the frozen manifest.
+    row_version: int
+    supersedes_id: uuid.UUID | None
+    supersedes_label: str | None
+    makers: list[str]
+    # MANIFEST: frozen at submission; DRAFT: the draft's own links (S2-A.1); LIVE: seeded concept-level links.
+    controls_source: Literal["MANIFEST", "LIVE", "DRAFT"]
+    # Display names for principal references (seeded versions carry synthetic labels instead of principals).
+    people: dict[str, str]
+    # S2-A.1: mandatory questions without a mapped control; the checker must acknowledge each before approving.
+    unmapped_mandatory: list[str] = Field(default_factory=list)
 
 
 # ---- F6: Script Studio and Assignment Rules (API-060…062, API-064…066; read-only) ------------------------------
@@ -2025,7 +2049,8 @@ class IntakeOutcome(BaseModel):
     risk_note: str | None
     case: IntakeCaseOut
     holds: list[IntakeHoldOut]
-    script_routing: Literal["NOT_EVALUATED_IN_S0"] = "NOT_EVALUATED_IN_S0"
+    # S2-C: intake never assigns; the case waits for deterministic assignment (preview and apply in Call Detail).
+    script_routing: Literal["AWAITING_DETERMINISTIC_ASSIGNMENT"] = "AWAITING_DETERMINISTIC_ASSIGNMENT"
     compliance_outcome: Literal["NOT_EVALUATED_IN_S0"] = "NOT_EVALUATED_IN_S0"
     routes: dict[str, str] = Field(default_factory=dict)
 
@@ -2125,3 +2150,735 @@ class IntakeReference(BaseModel):
     enums: dict[str, list[str]]
     priority_min: int
     priority_max: int
+
+
+# ---- S2-A: Script Studio authoring --------------------------------------------------------------------------------
+Condition = dict[str, Any] | None
+
+
+class ScriptFamilyCreate(BaseModel):
+    code: str = Field(min_length=3, max_length=40)
+    name: str = Field(min_length=3, max_length=120)
+    purpose: Literal["SALE_VERIFICATION"] = "SALE_VERIFICATION"
+    description: str = Field(default="", max_length=2000)
+    market: str = "SG"
+
+
+class ScriptDraftCreate(BaseModel):
+    base_version_id: uuid.UUID | None = None
+
+
+class DraftCreated(BaseModel):
+    script_family_id: uuid.UUID
+    script_version_id: uuid.UUID
+    version_label: str
+
+
+class DraftChanged(BaseModel):
+    script_version_id: uuid.UUID
+    row_version: int
+
+
+class SectionCreate(BaseModel):
+    expected_row_version: int
+    module_id: uuid.UUID | None = None  # reuse a published module
+    module_code: str | None = None  # or create a new one
+    module_name: str | None = None
+    module_kind: Literal["COMMON", "PRODUCT", "RISK", "LANGUAGE"] | None = None
+    inclusion_condition: Condition = None
+
+
+class SectionUpdate(BaseModel):
+    expected_row_version: int
+    inclusion_condition: Condition = None
+    module_name: str | None = None
+
+
+class OrderIn(BaseModel):
+    expected_row_version: int
+    order: list[uuid.UUID] = Field(min_length=1)
+
+
+class QuestionContent(BaseModel):
+    intent: str
+    category: str = "OTHER"
+    customer_wording: str
+    delivery_mode: Literal["CONVERSATIONAL", "CONTROLLED_TTS", "EXACT_AUDIO"]
+    answer_type: Literal["YES_NO", "NUMERIC", "ENUM", "FREE_TEXT", "ACKNOWLEDGEMENT"]
+    enum_options: list[str] = Field(default_factory=list, max_length=20)
+    mandatory: bool
+    expected_answer_policy: Literal[
+        "EXACT_BOOLEAN", "NUMERIC_MATCH_POLICY_FACT", "ACKNOWLEDGEMENT", "NARRATIVE_REVIEW", "COLLECT_ONLY"
+    ]
+    expected_boolean: bool | None = None
+    policy_fact_key: str | None = None
+    acceptable_variants: list[str] = Field(default_factory=list, max_length=20)
+    unacceptable_outcomes: list[str] = Field(default_factory=list, max_length=20)
+    not_applicable_predicate: Condition = None
+    evidence_required: bool | None = None
+    escalation_rule_ref: str | None = None
+    max_reprompts: int = 1
+
+
+class QuestionAdd(BaseModel):
+    expected_row_version: int
+    question_code: str
+    content: QuestionContent | None = None  # None reuses the question bank's latest revision unchanged
+    branch_condition: Condition = None
+    change_reason: str | None = Field(default=None, max_length=300)
+
+
+class QuestionUpdate(BaseModel):
+    expected_row_version: int
+    content: QuestionContent
+    branch_condition: Condition = None
+    change_reason: str | None = Field(default=None, max_length=300)
+
+
+class ControlLinkIn(BaseModel):
+    control_id: uuid.UUID
+    regulatory_reference_id: uuid.UUID | None = None
+    rationale: str
+
+
+class ControlLinksIn(BaseModel):
+    expected_row_version: int
+    links: list[ControlLinkIn] = Field(default_factory=list, max_length=20)
+
+
+class ValidationIssue(BaseModel):
+    severity: Literal["ERROR", "WARNING"]
+    code: str
+    message: str
+    module_code: str | None = None
+    question_code: str | None = None
+
+
+class ValidationResult(BaseModel):
+    script_version_id: uuid.UUID
+    validation_status: Literal["VALID", "INVALID"]
+    issues: list[ValidationIssue]
+
+
+class SubmitIn(BaseModel):
+    expected_row_version: int
+    change_summary: str = Field(max_length=2000)
+
+
+class ReviewIn(BaseModel):
+    decision: Literal["APPROVE", "REQUEST_CHANGES"]
+    reason: str = Field(max_length=2000)
+    # S2-A.1: to approve, list exactly the mandatory questions that have no mapped control (reviewed and accepted).
+    acknowledged_unmapped_mandatory: list[str] = Field(default_factory=list, max_length=200)
+
+
+class AbandonIn(BaseModel):
+    expected_row_version: int
+    reason: str = Field(max_length=2000)
+
+
+class PublishIn(BaseModel):
+    supersede_version_id: uuid.UUID | None = None
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class LifecycleOut(BaseModel):
+    script_version_id: uuid.UUID
+    status: str
+    manifest_sha256: str | None
+    issues: list[ValidationIssue] = Field(default_factory=list)
+    superseded: str | None = None
+
+
+class ScriptChangeEventOut(BaseModel):
+    seq: int
+    event_type: str
+    actor_ref: str
+    actor_name: str
+    reason: str | None
+    details: dict[str, Any]
+    occurred_at: datetime
+
+
+class ScriptHistory(BaseModel):
+    script_version_id: uuid.UUID
+    version_label: str
+    status: str
+    makers: list[str]
+    events: list[ScriptChangeEventOut]
+
+
+class DiffField(BaseModel):
+    field: str
+    before: Any
+    after: Any
+
+
+class DiffSection(BaseModel):
+    module_code: str
+    change: Literal["ADDED", "REMOVED", "MOVED", "CHANGED", "UNCHANGED"]
+    from_position: int | None
+    to_position: int | None
+    fields: list[DiffField]
+
+
+class DiffQuestion(BaseModel):
+    question_code: str
+    change: Literal["ADDED", "REMOVED", "MOVED", "REWORDED", "CHANGED", "UNCHANGED"]
+    from_module: str | None
+    to_module: str | None
+    from_position: int | None
+    to_position: int | None
+    fields: list[DiffField]
+    moved: bool = False
+
+
+class DiffVersionRef(BaseModel):
+    id: uuid.UUID
+    version_label: str
+    status: str
+    manifest_sha256: str | None
+
+
+class ScriptDiff(BaseModel):
+    base: DiffVersionRef | None
+    target: DiffVersionRef
+    sections: list[DiffSection]
+    questions: list[DiffQuestion]
+    summary: dict[str, int]
+
+
+class QuestionBankItemOut(BaseModel):
+    id: uuid.UUID
+    question_code: str
+    intent: str
+    category: str
+    latest_revision: int
+    customer_wording: str
+    answer_type: str
+    delivery_mode: str
+    mandatory: bool
+    expected_answer_policy: str
+    content_approval_status: str
+    used_in_versions: int
+    # S2-A.1: only a question with published content can be reused; ``latest_revision`` is the latest published one.
+    reusable: bool = True
+
+
+class QuestionBankList(BaseModel):
+    items: list[QuestionBankItemOut]
+    total: int
+
+
+class ModuleOption(BaseModel):
+    id: uuid.UUID
+    code: str
+    revision: int
+    name: str
+    kind: str
+    questions: int
+
+
+class PickOption(BaseModel):
+    id: uuid.UUID
+    code: str
+    label: str
+
+
+class AuthoringOptions(BaseModel):
+    """Approved vocabularies for the editor: nothing outside these lists is accepted by the server."""
+
+    controls: list[PickOption]
+    regulatory_references: list[PickOption]
+
+    condition_facts: dict[str, list[Any]]
+    risk_bands: list[str]
+    fact_keys: dict[str, str]
+    categories: list[str]
+    delivery_modes: list[str]
+    answer_types: list[str]
+    expected_answer_policies: list[str]
+    module_kinds: list[str]
+    published_modules: list[ModuleOption]
+
+
+# ---- S2-B: editable script-assignment rules (SCR-011, SUR-006/007 for rules) -------------------------------------
+RuleValue = str | bool
+
+
+class RuleCondition(BaseModel):
+    field: str = Field(max_length=40)
+    values: list[RuleValue] = Field(max_length=50)
+
+
+class RuleFieldValue(BaseModel):
+    value: RuleValue
+    label: str
+
+
+class RuleFieldOption(BaseModel):
+    field: str
+    label: str
+    values: list[RuleFieldValue]
+    source: str
+    required: bool
+
+
+class RuleUnsupportedField(BaseModel):
+    field: str
+    label: str
+    reason: str
+
+
+class RuleTargetOption(BaseModel):
+    id: uuid.UUID
+    label: str
+    family: str
+    version_label: str
+    status: str
+    effective_from: datetime | None
+    effective_to: datetime | None
+    content_approval_status: str
+    selectable: bool  # published and effective now
+
+
+class RuleOptions(BaseModel):
+    fields: list[RuleFieldOption]
+    unsupported: list[RuleUnsupportedField]
+    targets: list[RuleTargetOption]
+    precedence: list[str]
+    priority_range: list[int]
+
+
+class RuleIssue(BaseModel):
+    severity: Literal["ERROR", "WARNING", "INFO"]
+    code: str
+    message: str
+    rules: list[str] = Field(default_factory=list)
+
+
+class RuleConflictOut(BaseModel):
+    kind: str
+    severity: str
+    rules: list[str]
+    message: str
+    against: str | None = None
+
+
+class RuleAnalysis(BaseModel):
+    issues: list[RuleIssue]
+    conflicts: list[RuleConflictOut]
+    specificity: int
+    explanation: str
+    valid: bool
+
+
+class RuleContent(BaseModel):
+    name: str = Field(max_length=120)
+    description: str = Field(default="", max_length=1000)
+    conditions: list[RuleCondition] = Field(max_length=20)
+    priority: int
+    is_fallback: bool = False
+    target_script_version_id: uuid.UUID | None = None
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
+
+
+class RuleExplainIn(RuleContent):
+    rule_code: str | None = Field(default=None, max_length=40)
+    market: str = Field(default="SG", max_length=40)
+
+
+class RuleCreate(BaseModel):
+    code: str = Field(max_length=40)
+    name: str = Field(max_length=120)
+    description: str = Field(default="", max_length=1000)
+    market: str = Field(default="SG", max_length=40)
+    copy_from_rule_version_id: uuid.UUID | None = None
+
+
+class RuleVersionCreate(BaseModel):
+    base_rule_version_id: uuid.UUID | None = None
+
+
+class RuleDraftUpdate(BaseModel):
+    expected_row_version: int
+    content: RuleContent
+
+
+class RuleSubmitIn(BaseModel):
+    expected_row_version: int
+    change_summary: str = Field(max_length=2000)
+
+
+class RuleAbandonIn(BaseModel):
+    expected_row_version: int
+    reason: str = Field(max_length=2000)
+
+
+class RuleReviewIn(BaseModel):
+    decision: Literal["APPROVE", "REQUEST_CHANGES"]
+    reason: str = Field(max_length=2000)
+
+
+class RulePublishIn(BaseModel):
+    supersede_rule_version_id: uuid.UUID | None = None
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class RuleDraftCreated(BaseModel):
+    draft_id: uuid.UUID
+    rule_code: str
+    planned_version: int
+
+
+class RuleDraftChanged(BaseModel):
+    draft_id: uuid.UUID
+    row_version: int
+
+
+class RuleLifecycleOut(BaseModel):
+    draft_id: uuid.UUID
+    status: str
+    manifest_sha256: str | None = None
+    issues: list[RuleIssue] = Field(default_factory=list)
+    rule_version_id: uuid.UUID | None = None
+    version: int | None = None
+    superseded: str | None = None
+
+
+class RuleTargetRef(BaseModel):
+    id: uuid.UUID | None
+    label: str
+    script_family_id: uuid.UUID | None = None
+    status: str | None = None
+
+
+class RuleVersionOut(BaseModel):
+    id: uuid.UUID
+    rule_code: str
+    version: int
+    name: str
+    status: str
+    priority: int
+    specificity: int
+    is_fallback: bool
+    conditions: list[RuleCondition]
+    explanation: str
+    target: RuleTargetRef
+    effective_from: datetime
+    effective_to: datetime | None
+    checksum: str
+    author_ref: str
+    checker_ref: str
+    published_by: str | None
+    cases_assigned: int
+    authored_in_rule_studio: bool
+    # Display names for principal references (seeded versions carry synthetic labels instead of principals).
+    people: dict[str, str] = Field(default_factory=dict)
+
+
+class RuleDraftSummary(BaseModel):
+    id: uuid.UUID
+    planned_version: int
+    status: str
+    name: str
+    author_ref: str
+    updated_at: datetime | None
+    created_at: datetime
+
+
+class RuleSummary(BaseModel):
+    rule_code: str
+    name: str
+    market: str
+    live: RuleVersionOut | None
+    versions: list[RuleVersionOut]
+    open_draft: RuleDraftSummary | None
+    drafts: list[RuleDraftSummary]
+
+
+class RuleRegistry(BaseModel):
+    items: list[RuleSummary]
+    total: int
+    conflicts: list[RuleConflictOut]
+
+
+class RuleDraftOut(BaseModel):
+    id: uuid.UUID
+    rule_code: str
+    name: str
+    description: str
+    market: str
+    planned_version: int
+    status: str
+    conditions: list[RuleCondition]
+    priority: int
+    is_fallback: bool
+    target: RuleTargetRef | None
+    effective_from: datetime | None
+    effective_to: datetime | None
+    validation_status: str
+    manifest_sha256: str | None
+    author_ref: str
+    reviewer_ref: str | None
+    publisher_ref: str | None
+    published_rule_version_id: uuid.UUID | None
+    base_rule_version_id: uuid.UUID | None
+    base_ref: str | None
+    copied_from_ref: str | None
+    live_rule_version_id: uuid.UUID | None
+    live_ref: str | None
+    row_version: int
+    makers: list[str]
+    people: dict[str, str]
+    analysis: RuleAnalysis
+    created_at: datetime
+    updated_at: datetime | None
+
+
+class RuleChangeEventOut(BaseModel):
+    draft_id: uuid.UUID
+    planned_version: int
+    seq: int
+    event_type: str
+    actor_ref: str
+    actor_name: str
+    reason: str | None
+    details: dict[str, Any]
+    occurred_at: datetime
+
+
+class RuleHistory(BaseModel):
+    rule_code: str
+    events: list[RuleChangeEventOut]
+    versions: list[RuleVersionOut]
+    drafts: list[RuleDraftSummary]
+
+
+class RuleConditionDiff(BaseModel):
+    field: str
+    label: str
+    before: list[RuleValue] | None
+    after: list[RuleValue] | None
+    effect: str
+
+
+class RuleFieldDiff(BaseModel):
+    field: str
+    before: Any
+    after: Any
+
+
+class RuleDiff(BaseModel):
+    base: str | None
+    target: str
+    conditions: list[RuleConditionDiff]
+    fields: list[RuleFieldDiff]
+
+
+class RuleSimulateIn(BaseModel):
+    draft_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+    as_of: datetime | None = None
+    scope: Literal["ALL", "OPEN", "UNASSIGNED"] = "ALL"
+
+
+class SimConditionResult(BaseModel):
+    field: str
+    expected: list[RuleValue]
+    actual: Any
+    result: Literal["PASS", "FAIL", "UNKNOWN"]
+
+
+class SimRuleTrace(BaseModel):
+    ref: str
+    rule_code: str
+    origin: str
+    priority: int
+    specificity: int
+    is_fallback: bool
+    target_label: str
+    eligible: bool
+    excluded_reason: str | None
+    match: str
+    selected: bool
+    tied: bool
+    conditions: list[SimConditionResult]
+
+
+class SimDecision(BaseModel):
+    outcome: str
+    selected_script_label: str | None
+    selected_script_version_id: str | None
+    winning_rules: list[str]
+    reason: str
+    determinable_script_label: str | None
+    trace: list[SimRuleTrace] = Field(default_factory=list)
+
+
+class SimExisting(BaseModel):
+    script_version_id: str
+    script_label: str
+    rule: str | None
+    origin: str
+    assigned_at: datetime
+
+
+class SimCase(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    state: str
+    has_blocking_hold: bool
+    inputs: dict[str, Any]
+    existing: SimExisting | None
+    baseline: SimDecision
+    proposed: SimDecision
+    changed: bool
+    differs_from_existing: bool
+
+
+class SimRule(BaseModel):
+    ref: str
+    rule_code: str
+    origin: str
+    status: str
+    priority: int
+    specificity: int
+    is_fallback: bool
+    target_label: str
+    target_effective: bool
+    effective_from: datetime | None
+    effective_to: datetime | None
+    effective_now: bool
+    explanation: str
+    conditions: list[RuleCondition]
+    cases_won: int
+
+
+class SimSummary(BaseModel):
+    cases: int
+    baseline: dict[str, int]
+    proposed: dict[str, int]
+    changed: int
+    differs_from_existing: int
+
+
+class RuleSimulation(BaseModel):
+    as_of: datetime
+    scope: str
+    drafts: list[uuid.UUID]
+    rules: list[SimRule]
+    conflicts: list[RuleConflictOut]
+    summary: SimSummary
+    cases: list[SimCase]
+    side_effects: Literal["NONE"] = "NONE"
+    note: str
+
+
+# ---- S2-C: deterministic script assignment (SCR-004, SCR-011) ----------------------------------------------------
+class PinnedAssignment(BaseModel):
+    script_assignment_id: uuid.UUID
+    script_version_id: uuid.UUID
+    script_family_id: uuid.UUID
+    script_label: str
+    manifest_sha256: str
+    matched_rule: str | None
+    origin: str
+    assigned_at: datetime
+    assigned_by: str
+    explanation: str | None
+    input_sha256: str
+
+
+class AssignmentPreview(BaseModel):
+    outcome: str
+    reason: str
+    would_assign: bool
+    script_version_id: str | None
+    script_family_id: uuid.UUID | None
+    script_label: str | None
+    determinable_script_label: str | None
+    winning_rules: list[str]
+    explanation: str | None
+    contact_resolution: dict[str, Any]
+    trace: list[dict[str, Any]]
+    inputs: dict[str, Any]
+    would_release: list[str]
+    would_place: list[str]
+    remaining_blocking: list[str]
+    decision_sha256: str
+    evaluated_at: datetime
+
+
+class AssignmentHold(BaseModel):
+    hold_reason: str
+    is_blocking: bool
+    placed_at: datetime
+    source: str
+    placed_reason: str | None
+
+
+class AssignmentAttemptOut(BaseModel):
+    id: uuid.UUID
+    outcome: str
+    applied: bool
+    reason: str
+    script_label: str | None
+    winning_rules: list[str]
+    holds_released: list[str]
+    holds_placed: list[str]
+    trigger: str
+    actor: str
+    evaluated_at: datetime
+    decision_sha256: str
+
+
+class CaseScriptAssignment(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    state: str
+    status: Literal["ASSIGNED", "READY_TO_ASSIGN", "BLOCKED", "NOT_ELIGIBLE"]
+    blocked_reason: str | None
+    current: PinnedAssignment | None
+    preview: AssignmentPreview
+    holds: list[AssignmentHold]
+    attempts: list[AssignmentAttemptOut]
+    can_apply: bool
+    note: str
+
+
+class ApplyAssignmentIn(BaseModel):
+    expected_decision_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class ApplyAssignmentOut(BaseModel):
+    case_id: uuid.UUID
+    status: Literal["ASSIGNED", "NOT_ASSIGNED", "ALREADY_ASSIGNED", "REPLAYED"]
+    attempt: AssignmentAttemptOut | None
+    current: PinnedAssignment | None
+
+
+class AssignmentBatchIn(BaseModel):
+    dry_run: bool = True
+    case_ids: list[uuid.UUID] | None = Field(default=None, max_length=500)
+    limit: int = Field(default=500, ge=1, le=500)
+
+
+class AssignmentBatchCase(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    status: str
+    outcome: str | None
+    script_label: str | None
+    winning_rules: list[str]
+    reason: str
+    would_release: list[str]
+    would_place: list[str]
+
+
+class AssignmentBatchOut(BaseModel):
+    dry_run: bool
+    cases: int
+    summary: dict[str, int]
+    results: list[AssignmentBatchCase]
+    note: str

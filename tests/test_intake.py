@@ -174,7 +174,7 @@ def test_preview_persists_nothing_and_commit_writes_one_linked_transaction(
     p = pv.json()
     assert p["mode"] == "PREVIEW" and p["case"]["case_ref"] is None and p["policy"]["outcome"] == "NEW"
     assert [h["reason"] for h in p["holds"]] == ["AWAITING_SCRIPT_ASSIGNMENT"]
-    assert p["script_routing"] == "NOT_EVALUATED_IN_S0" and p["case"]["callable"] is False
+    assert p["script_routing"] == "AWAITING_DETERMINISTIC_ASSIGNMENT" and p["case"]["callable"] is False
     assert counts(db) == before  # API-084 persists nothing except its audit event
     assert len(audit(db, "INTAKE.PREVIEWED", body["source_event_id"])) == 1
 

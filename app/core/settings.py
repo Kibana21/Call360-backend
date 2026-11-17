@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     login_ip_per_minute: int = 20
     refresh_per_minute: int = 30
     writes_per_minute: int = 30
+    script_writes_per_minute: int = 240  # S2-A: an author edits many small things in a row
 
     allowed_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     cookie_secure: bool = False

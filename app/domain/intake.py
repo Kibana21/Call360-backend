@@ -609,7 +609,7 @@ def describe(p: Plan, ids: Ids | None = None) -> dict[str, Any]:
             {"reason": h, "label": holds.labels.get(h, h), "blocking": bool(holds.values[h].get("blocking"))}
             for h in p.holds
         ],
-        "script_routing": "NOT_EVALUATED_IN_S0",
+        "script_routing": "AWAITING_DETERMINISTIC_ASSIGNMENT",
         "compliance_outcome": "NOT_EVALUATED_IN_S0",
         "routes": ({"policy": f"/policies/{ids.policy_id}?sale={sid}", "case": f"/cases/{ids.case_id}"} if ids else {}),
     }
@@ -999,7 +999,7 @@ def commit(
 
 def _hold_reason(reason: str) -> str:
     return {
-        "AWAITING_SCRIPT_ASSIGNMENT": "Intake-created case: script routing is not evaluated in Stage 0",
+        "AWAITING_SCRIPT_ASSIGNMENT": "Intake-created case: awaiting deterministic script assignment (S2-C)",
         "NO_ELIGIBLE_CONTACT": "No eligible callback contact under the governed callable-role rule",
         "RISK_TRIAGE": "ILP sale received without SBQ selection risk",
     }.get(reason, reason)

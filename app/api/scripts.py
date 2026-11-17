@@ -34,12 +34,13 @@ from app.api.schemas import (
     ScriptVersionList,
     ScriptVersionSummary,
 )
+from app.domain import script_authoring
 from app.security.authz import AuthContext, get_db, require
 
 router = APIRouter(prefix="/api/v1", tags=["scripts"])
 _ERR: dict[int | str, dict[str, Any]] = {code: {"model": ErrorResponse} for code in (401, 403, 404, 422)}
 VersionStatus = Literal[
-    "DRAFT", "SUBMITTED_FOR_REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED", "SUPERSEDED", "WITHDRAWN"
+    "DRAFT", "SUBMITTED_FOR_REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED", "SUPERSEDED", "WITHDRAWN", "ABANDONED"
 ]
 RECENT_CASES = 10
 
@@ -368,54 +369,88 @@ def controls_list(
     auth: AuthContext = Depends(require("script.read")),
     db: Session = Depends(get_db),
 ) -> ControlList:
-    """Controls linked to questions of in-scope script versions; regulatory links only from in-scope markets."""
+    """Controls linked to questions of in-scope script versions; regulatory links only from in-scope markets.
+
+    S2-A.1: each version contributes its own links (seeded versions: the concept library; Script Studio versions:
+    their frozen manifest or, for drafts, their own rows), so a draft's proposals never appear against other versions.
+    Abandoned drafts are not listed."""
     markets = sorted(auth.markets)
-    in_versions: dict[uuid.UUID, list[str]] = {}
+    versions = (
+        db.execute(
+            text(
+                "SELECT v.*, f.code AS family FROM script_version v JOIN script_family f ON f.id = v.script_family_id "
+                "WHERE f.market_code = ANY(:m) AND v.status <> 'ABANDONED' ORDER BY f.code, v.version_label"
+            ),
+            {"m": markets},
+        )
+        .mappings()
+        .all()
+    )
+    items_in: dict[uuid.UUID, set[uuid.UUID]] = {}
     for iv in db.execute(
         text(
-            "SELECT DISTINCT qr.question_bank_item_id, f.code, v.version_label FROM script_version v "
-            "JOIN script_family f ON f.id = v.script_family_id JOIN script_section ss ON ss.script_version_id = v.id "
+            "SELECT DISTINCT ss.script_version_id, qr.question_bank_item_id FROM script_section ss "
             "JOIN module_question mq ON mq.script_module_id = ss.script_module_id "
-            "JOIN question_revision qr ON qr.id = mq.question_revision_id WHERE f.market_code = ANY(:m) "
-            "ORDER BY f.code, v.version_label"
+            "JOIN question_revision qr ON qr.id = mq.question_revision_id WHERE ss.script_version_id = ANY(:v)"
         ),
-        {"m": markets},
+        {"v": [v["id"] for v in versions]},
     ):
-        in_versions.setdefault(iv.question_bank_item_id, []).append(f"{iv.code} v{iv.version_label}")
+        items_in.setdefault(iv.script_version_id, set()).add(iv.question_bank_item_id)
+    # (control, question, reference) -> link facts and the versions showing it
+    links: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID | None], dict[str, Any]] = {}
+    for v in versions:
+        present = items_in.get(v["id"], set())
+        for r in script_authoring.link_rows(db, dict(v), list(present)):
+            key = (r["control_id"], r["item_id"], r["ref_id"])
+            entry = links.setdefault(key, {**r, "versions": []})
+            entry["versions"].append(f"{v['family']} v{v['version_label']}")
+    if not links:
+        return ControlList(items=[])
+    ctl = {
+        r["id"]: r
+        for r in db.execute(
+            text("SELECT id, control_code, name, owner_role, content_approval_status FROM control WHERE id = ANY(:c)"),
+            {"c": list({k[0] for k in links})},
+        ).mappings()
+    }
+    qbi = {
+        r["id"]: r
+        for r in db.execute(
+            text("SELECT id, question_code, intent FROM question_bank_item WHERE id = ANY(:i)"),
+            {"i": list({k[1] for k in links})},
+        ).mappings()
+    }
+    refs = {
+        r["id"]: r
+        for r in db.execute(
+            text("SELECT id, title FROM regulatory_reference WHERE id = ANY(:r) AND market_code = ANY(:m)"),
+            {"r": [k[2] for k in links if k[2]], "m": markets},
+        ).mappings()
+    }
     controls: dict[uuid.UUID, ControlOut] = {}
-    for r in db.execute(
-        text(
-            "SELECT ct.id, ct.control_code, ct.name, ct.owner_role, ct.content_approval_status, "
-            "qbi.id AS item_id, qbi.question_code, qbi.intent, cm.rationale, cm.status AS mapping_status, "
-            "rr.id AS rr_id, rr.title AS rr_title FROM control ct JOIN control_mapping cm ON cm.control_id = ct.id "
-            "JOIN question_bank_item qbi ON qbi.id = cm.question_bank_item_id "
-            "LEFT JOIN regulatory_reference rr ON rr.id = cm.regulatory_reference_id AND rr.market_code = ANY(:m) "
-            "ORDER BY ct.control_code, qbi.question_code"
-        ),
-        {"m": markets},
-    ).mappings():
-        if r["item_id"] not in in_versions:
-            continue  # the question is not used by any script version in scope
+    for key in sorted(links, key=lambda k: (ctl[k[0]]["control_code"], qbi[k[1]]["question_code"])):
+        r, c_row, q_row = links[key], ctl[key[0]], qbi[key[1]]
+        ref = refs.get(key[2]) if key[2] else None
         c = controls.setdefault(
-            r["id"],
+            key[0],
             ControlOut(
-                id=r["id"],
-                control_code=r["control_code"],
-                name=r["name"],
-                owner_role=r["owner_role"],
-                content_approval_status=r["content_approval_status"],
+                id=key[0],
+                control_code=c_row["control_code"],
+                name=c_row["name"],
+                owner_role=c_row["owner_role"],
+                content_approval_status=c_row["content_approval_status"],
                 questions=[],
             ),
         )
         c.questions.append(
             ControlQuestionLink(
-                question_code=r["question_code"],
-                intent=r["intent"],
+                question_code=q_row["question_code"],
+                intent=q_row["intent"],
                 rationale=r["rationale"],
-                mapping_status=r["mapping_status"],
-                regulatory_reference_id=r["rr_id"],
-                regulatory_reference_title=r["rr_title"],
-                script_versions=in_versions[r["item_id"]],
+                mapping_status=r["status"],
+                regulatory_reference_id=ref["id"] if ref else None,
+                regulatory_reference_title=ref["title"] if ref else None,
+                script_versions=r["versions"],
             )
         )
     return ControlList(items=list(controls.values()))

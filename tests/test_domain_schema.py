@@ -59,7 +59,7 @@ def test_be_data_01_each_cp02_revision_round_trips_and_preserves_earlier_data(
     assert appended == {
         "CONFIG.CODE_LIST_VERSION_REMOVED": 9,
         "CONFIG.CODE_LIST_VERSION_ACTIVATED": 9,
-        "ADMIN.GROUP_MAPPING_CHANGED": 4,  # 2 seeded scope mappings removed and re-added (D-39)
+        "ADMIN.GROUP_MAPPING_CHANGED": 6,  # 2 seeded + 1 S2-A checker scope mapping removed and re-added (D-39)
     }
 
 
