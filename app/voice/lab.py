@@ -140,7 +140,12 @@ def prompt_content_sha(c: dict[str, Any]) -> str:
 
 def save_prompt(db: Session, actor: str, body: dict[str, Any], prompt_id: uuid.UUID | None = None) -> dict[str, Any]:
     """Create a prompt or append a new version (insert-only history; an unchanged configuration is refused)."""
-    _check_provider_config(body["provider"], body["model"], body["voice"])
+    if _check_provider_config(body["provider"], body["model"], body["voice"]).hidden:
+        raise LabError(
+            422,
+            "PROVIDER_RENAMED",
+            f"{body['provider']} is a legacy code; use OPENAI_GPT_LIVE (or the preferred AZURE_OPENAI_GPT_LIVE)",
+        )
     now = _now()
     if prompt_id is None:
         prompt_id = uuid.uuid4()
@@ -429,6 +434,9 @@ def lab_settings(db: Session, settings: Any) -> dict[str, Any]:
                 "voices": list(p.voices),
                 "rate_card": p.rates.as_json(),
                 "network": p.network,
+                "vendor": p.vendor,
+                "preferred": p.preferred,
+                "hidden": p.hidden,
             }
             for p in (lc.resolve(code, settings) for code in lc.PROVIDERS)
         ],
@@ -575,6 +583,13 @@ def create_session(
         if auth is not None and auth["expires_at"] <= now:
             db.execute(text("UPDATE lab_paid_authorisation SET status = 'EXPIRED' WHERE id = :i"), {"i": auth["id"]})
             auth = None
+        if p.models and pv["model"] not in p.models:
+            reasons.append(
+                f"DEPLOYMENT_MISMATCH: the prompt names {pv['model']}; this server is configured for "
+                f"{', '.join(p.models)}"
+            )
+        if not p.rates.known:
+            reasons.append(f"COST_UNKNOWN: {p.rates.basis}")
         if auth is None:
             reasons.append("SMOKE_TEST_NOT_AUTHORISED: no issued single-use paid smoke-test authorisation")
         else:
@@ -603,7 +618,7 @@ def create_session(
             409, "PROVIDER_NOT_AVAILABLE", "Refused by Voice Lab cost controls", [f"PROVIDER_NOT_AVAILABLE: {p.reason}"]
         )
     sid = uuid.uuid4()
-    gpt = p.code in ("GPT_LIVE", "GPT_LIVE_MOCK")
+    gpt = p.code in GPT_PROVIDERS
     db.execute(
         text(
             "INSERT INTO lab_session (id, session_ref, mode, prompt_version_id, provider, model, voice, spend_class, "
@@ -690,10 +705,12 @@ def issue_authorisation(
 ) -> dict[str, Any]:
     """A manager's single-use permission for ONE paid session. Issuing is not execution: another user must start it,
     and every other gate still applies at that moment."""
-    p = lc.provider(provider_code)
-    if p.spend_class != "PAID":
-        raise LabError(422, "NOT_A_PAID_PROVIDER", "Smoke-test authorisations are for paid providers only")
+    p = lc.resolve(provider_code, settings)
+    if p.spend_class != "PAID" or p.hidden:
+        raise LabError(422, "NOT_A_PAID_PROVIDER", "Smoke-test authorisations are for the paid GPT-Live providers")
     _check_provider_config(provider_code, model, voice)
+    if p.models and model not in p.models:
+        raise LabError(422, "MODEL_UNKNOWN", f"{provider_code} is configured for: {', '.join(p.models)}")
     if not 10 <= max_duration_s <= 120:
         raise LabError(422, "DURATION_INVALID", "A smoke test lasts 10–120 seconds")
     if _one(db, "SELECT id FROM lab_paid_authorisation WHERE status = 'ISSUED' AND expires_at > now()"):
@@ -701,7 +718,10 @@ def issue_authorisation(
     db.execute(
         text("UPDATE lab_paid_authorisation SET status = 'EXPIRED' WHERE status = 'ISSUED' AND expires_at <= now()")
     )
-    max_usd = lc.estimate_session(p, max_duration_s)
+    try:
+        max_usd = lc.estimate_session(p, max_duration_s)
+    except lc.BudgetError as exc:  # e.g. Azure without a verified price: no authorisation can be issued
+        raise LabError(exc.status, exc.code, f"{exc.message}: {p.rates.basis}") from exc
     aid = uuid.uuid4()
     db.execute(
         text(
@@ -818,7 +838,7 @@ def mark_live(db: Session, session_id: uuid.UUID) -> dict[str, Any]:
     return s
 
 
-GPT_PROVIDERS = ("GPT_LIVE", "GPT_LIVE_MOCK")
+GPT_PROVIDERS = ("AZURE_OPENAI_GPT_LIVE", "OPENAI_GPT_LIVE", "GPT_LIVE", "GPT_LIVE_MOCK")
 
 
 def finish_session(
@@ -1097,6 +1117,16 @@ class LabRecorder:
         }
 
 
+BASIS = {
+    "MIC": "Server-side capture of the microphone audio as received by the server",
+    "PROVIDER_PLAYBACK": (
+        "Server-side capture of the provider audio SENT to the browser, placed at its send time — not a record of "
+        "what the browser played: queued audio cleared by an interruption may be included, and provider audio "
+        "dropped after an interruption is excluded (it was never sent)"
+    ),
+}
+
+
 def save_recording(db: Session, rs: EncryptedObjectStore, session_id: uuid.UUID, rec: LabRecorder, actor: str) -> None:
     for track, pcm in rec.tracks().items():
         if not pcm:
@@ -1115,7 +1145,7 @@ def save_recording(db: Session, rs: EncryptedObjectStore, session_id: uuid.UUID,
                 "k": key,
                 "n": len(pcm) // 2,
                 "h": _sha(pcm),
-                "b": "Server-side capture: microphone as received; provider audio as sent, at its send time",
+                "b": BASIS[track],
                 "by": actor,
             },
         )

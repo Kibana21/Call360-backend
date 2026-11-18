@@ -8,6 +8,7 @@ Development uses APP_* connection settings; automated tests use TEST_* settings 
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -76,6 +77,28 @@ class Settings(BaseSettings):
     # money; synthetic metering at the verified GPT-Live rate). Unset: the provider is unavailable.
     voice_lab_gpt_live_mock_url: str | None = None
     voice_lab_close_timeout_s: float = 5.0
+    # S1-E.2A Azure OpenAI GPT-Live — the PREFERRED live provider. DISABLED by default. Endpoint = the resource
+    # endpoint (https://<resource>.openai.azure.com); deployment = the GPT-Live deployment name (sent as session.model).
+    # Auth: API_KEY (local development; header ``api-key``) or ENTRA (Microsoft Entra ID / Managed Identity bearer token
+    # via azure-identity, scope below). The price is NOT known to Call360: until VOICE_LAB_AZURE_PRICE_USD_PER_MIN and
+    # its source are configured from the owner's verified Azure price, every Azure session is refused (fail closed).
+    voice_lab_azure_gpt_live_mode: Literal["DISABLED", "LIVE"] = "DISABLED"
+    voice_lab_azure_openai_endpoint: str | None = None
+    voice_lab_azure_openai_deployment: str | None = None
+    voice_lab_azure_auth: Literal["API_KEY", "ENTRA"] = "API_KEY"
+    voice_lab_azure_openai_api_key: SecretStr | None = None
+    voice_lab_azure_entra_scope: str = "https://ai.azure.com/.default"  # Foundry managed-identity page; configurable
+    voice_lab_azure_managed_identity_client_id: str | None = None
+    voice_lab_azure_audio_rate: Literal[16000, 24000] = 24000
+    voice_lab_azure_deployment_type: Literal["GLOBAL", "DATA_ZONE"] | None = None
+    voice_lab_azure_region: str | None = None
+    voice_lab_azure_price_usd_per_min: Decimal | None = None
+    voice_lab_azure_price_source: str | None = None
+    voice_lab_azure_price_verified_on: str | None = None
+    # The mocked protocol server's profile (GPT_LIVE_MOCK): AZURE (default, the preferred provider's URL path, 24 kHz
+    # audio and api-key header) or OPENAI.
+    voice_lab_gpt_live_mock_profile: Literal["AZURE", "OPENAI"] = "AZURE"
+    voice_lab_start_timeout_s: float = 10.0  # connect + session.started; bounded 2–30 s
 
     access_token_ttl_seconds: int = 600
     refresh_idle_seconds: int = 1800

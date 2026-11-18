@@ -34,6 +34,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+from app.voice.live_providers import resample
 from app.voice.mock import Vad
 from app.voice.provider import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, SessionStats, VoiceChannel
 
@@ -66,26 +67,40 @@ def _loopback(url: str) -> bool:
     return u.scheme in ("ws", "wss") and (u.hostname or "") in LOOPBACK
 
 
-def allowed_url(url: str, *, app_env: str, mock: bool) -> bool:
-    """The official endpoint, or a loopback mocked protocol server (always for the mock provider; for the real
-    provider only in APP_ENV=test). Nothing else is ever contacted."""
-    if mock:
+def allowed_url(url: str, *, app_env: str, mock: bool, vendor: str = "OPENAI") -> bool:
+    """Connection-time guard (see ``app.voice.live_providers.allowed``)."""
+    from app.voice import live_providers as lp
+
+    return lp.allowed(url, vendor=vendor, app_env=app_env, mock=mock)
+
+
+def _allowed_openai(url: str, *, app_env: str, mock: bool) -> bool:
+    """The official endpoint, or a loopback mocked protocol server. In APP_ENV=test only loopback is allowed — the
+    official endpoint is refused even if a key were configured, so no automated test can make a paid call."""
+    if mock or app_env == "test":
         return _loopback(url)
     u = urlparse(url)
     if u.scheme == "wss" and u.hostname == OFFICIAL_HOST and u.path.startswith("/v1/live/sessions"):
         return True
-    return app_env == "test" and _loopback(url)
+    return False
 
 
 def check_urls(settings: Any) -> None:
-    if not allowed_url(settings.voice_lab_gpt_live_url, app_env=settings.app_env, mock=False):
+    url = settings.voice_lab_gpt_live_url
+    official = _allowed_openai(url, app_env="local", mock=False)
+    if not (official or (settings.app_env == "test" and _loopback(url))):
         raise ValueError("VOICE_LAB_GPT_LIVE_URL must be the official GPT-Live endpoint (loopback only in tests)")
+    from app.voice import live_providers as lp
+
+    lp.check(settings)
     if settings.voice_lab_gpt_live_mock_url and not allowed_url(
         settings.voice_lab_gpt_live_mock_url, app_env=settings.app_env, mock=True
     ):
         raise ValueError("VOICE_LAB_GPT_LIVE_MOCK_URL must be a loopback ws:// URL")
     if not 1.0 <= settings.voice_lab_close_timeout_s <= 30.0:
         raise ValueError("VOICE_LAB_CLOSE_TIMEOUT_S must be between 1 and 30")
+    if not 2.0 <= settings.voice_lab_start_timeout_s <= 30.0:
+        raise ValueError("VOICE_LAB_START_TIMEOUT_S must be between 2 and 30")
 
 
 # ---- deterministic delegation (no LLM, no tool, no network) --------------------------------------------------------
@@ -104,14 +119,16 @@ def delegate_reply(last_caller_text: str, n: int, now: datetime | None = None) -
 @dataclass
 class LiveConfig:
     url: str
-    api_key: str | None
+    headers: dict[str, str]  # secret authentication headers: never logged, returned or persisted
     model: str
     voice: str
     instructions: str
     turn_instructions: list[str]
     max_duration_s: float
     close_timeout_s: float = 5.0
-    store: bool = False
+    start_timeout_s: float = START_TIMEOUT_S
+    wire_rate: int = SAMPLE_RATE  # GPT-Live audio rate on the wire; browser audio is always 16 kHz
+    store: bool | None = False  # None: omit (Azure's strict session object does not list ``store``)
 
 
 @dataclass
@@ -144,10 +161,28 @@ class Connection(Protocol):
 Connector = Callable[[str, dict[str, str]], Awaitable[Connection]]
 
 
+class _RedactAuthorization(logging.Filter):
+    """Defence in depth: no log record may carry a bearer credential."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        low = msg.lower()
+        if "bearer " in low or "authorization" in low or "api-key" in low:
+            record.msg, record.args = "[redacted: authorization header]", ()
+        return True
+
+
+_WS_LOG = logging.getLogger("call360.gpt_live.transport")
+_WS_LOG.setLevel(logging.INFO)  # never DEBUG: the websockets client logs request headers at DEBUG level
+_WS_LOG.addFilter(_RedactAuthorization())
+
+
 async def default_connect(url: str, headers: dict[str, str]) -> Connection:
     import websockets
 
-    ws = await websockets.connect(url, additional_headers=headers, max_size=4 * 1024 * 1024, open_timeout=10)
+    ws = await websockets.connect(
+        url, additional_headers=headers, max_size=4 * 1024 * 1024, open_timeout=START_TIMEOUT_S, logger=_WS_LOG
+    )
     return ws
 
 
@@ -182,6 +217,7 @@ class GptLiveProvider:
         self._stats: SessionStats | None = None
         self._browser_gone = False
         self._term_task: asyncio.Future[None] | None = None
+        self.endpoint_info: dict[str, Any] = {}
 
     # ---- helpers ----------------------------------------------------------------------------------------------------
     async def _trace(self, kind: str, **details: Any) -> None:
@@ -209,9 +245,9 @@ class GptLiveProvider:
     # ---- lifecycle --------------------------------------------------------------------------------------------------
     async def run(self, channel: VoiceChannel, stats: SessionStats) -> None:
         self._channel, self._stats = channel, stats
-        headers = {"Authorization": f"Bearer {self.cfg.api_key}"} if self.cfg.api_key else {}
+        headers = dict(self.cfg.headers)
         try:
-            self._ws = await asyncio.wait_for(self.connect(self.cfg.url, headers), timeout=START_TIMEOUT_S)
+            self._ws = await asyncio.wait_for(self.connect(self.cfg.url, headers), timeout=self.cfg.start_timeout_s)
         except Exception as exc:  # noqa: BLE001 — no connection: nothing can have been billed
             stats.end_reason = "PROVIDER_CONNECT_FAILED"
             await self._trace("PROVIDER_CONNECT_FAILED", error=type(exc).__name__)
@@ -228,15 +264,18 @@ class GptLiveProvider:
                     "session": {
                         "model": self.cfg.model,
                         "instructions": self.cfg.instructions,
-                        "audio": {"format": AUDIO_FORMAT, "output": {"voice": self.cfg.voice}},
+                        "audio": {
+                            "format": {"type": "audio/pcm", "rate": self.cfg.wire_rate},
+                            "output": {"voice": self.cfg.voice},
+                        },
                         "delegation": {"type": "client"},
-                        "store": self.cfg.store,
+                        **({"store": self.cfg.store} if self.cfg.store is not None else {}),
                     },
                 }
             )
             started = asyncio.ensure_future(self._started_evt.wait())
             first: set[asyncio.Future[Any]] = {started, down}
-            done, _ = await asyncio.wait(first, timeout=START_TIMEOUT_S, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(first, timeout=self.cfg.start_timeout_s, return_when=asyncio.FIRST_COMPLETED)
             if started not in done:
                 started.cancel()
                 stats.end_reason = "PROVIDER_START_FAILED"
@@ -348,7 +387,8 @@ class GptLiveProvider:
                     await self.append_instruction(self.cfg.turn_instructions[k - 1], source=f"TURN_{k}")
             batch += msg.audio
             if len(batch) >= APPEND_FRAMES * FRAME_BYTES:
-                await self._send({"type": "session.input_audio.append", "audio": base64.b64encode(batch).decode()})
+                wire = resample(batch, SAMPLE_RATE, self.cfg.wire_rate)
+                await self._send({"type": "session.input_audio.append", "audio": base64.b64encode(wire).decode()})
                 batch = b""
 
     async def append_instruction(self, text: str, *, source: str) -> None:
@@ -414,7 +454,7 @@ class GptLiveProvider:
                 pcm = base64.b64decode(str(ev.get("delta") or ""), validate=True)
             except ValueError as exc:
                 raise GptLiveError("output audio is not base64") from exc
-            await self._audio_out(pcm)
+            await self._audio_out(resample(pcm, self.cfg.wire_rate, SAMPLE_RATE))
         elif kind == "session.started":
             s = _obj(ev.get("session"))
             self.outcome.started = True
@@ -534,7 +574,7 @@ class GptLiveProvider:
 
 async def close_orphan(
     base_url: str,
-    api_key: str | None,
+    headers: dict[str, str],
     provider_session_id: str,
     *,
     timeout_s: float,
@@ -543,7 +583,6 @@ async def close_orphan(
     """A manager's explicit close of a session whose termination was not confirmed: attach on the sideband URL, send
     ``session.close`` and wait for ``session.closed``. Returns (confirmed, usage seconds, reason)."""
     url = f"{base_url.rstrip('/')}/{provider_session_id}/attach"
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     ws = await asyncio.wait_for(connect(url, headers), timeout=START_TIMEOUT_S)
     try:
         await ws.send(json.dumps({"type": "session.close", "event_id": _event_id()}))

@@ -10,7 +10,8 @@ instructions and mute; cumulative ``session.usage.updated`` every 2 s; ``session
 usage seconds; the sideband ``…/{id}/attach`` close. Fault injection with markers in the session instructions:
 ``[mock:noclose]`` (ignore session.close), ``[mock:drop]`` (drop the connection after 2 s), ``[mock:error]`` (error and
 invalid events), ``[mock:expire=N]`` (close with reason ``expired`` after N s), ``[mock:silent]`` (no greeting),
-``[mock:delegate]`` (delegate on the first caller turn). It is a test double, not a description of model behaviour.
+``[mock:delegate]`` (delegate on the first caller turn), ``[mock:nostart]`` (never send ``session.started``). It
+is a test double, not a description of model behaviour.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import logging
 import math
 import re
 import time
@@ -74,6 +76,10 @@ class MockGptLiveServer:
         self.sessions: dict[str, MockSession] = {}
         self.connections = 0
         self.auth_headers: list[bool] = []
+        self.auth_kinds: list[str] = []  # "api-key" | "bearer" | "none" — values are never stored
+        self.models: list[str] = []
+        self.rates: list[int] = []
+        self.session_keys: list[list[str]] = []
         self._server: Any = None
 
     @property
@@ -83,7 +89,9 @@ class MockGptLiveServer:
     async def start(self) -> None:
         import websockets
 
-        self._server = await websockets.serve(self._handler, self.host, self.port, max_size=4 * 1024 * 1024)
+        log = logging.getLogger("call360.gpt_live_mock.transport")
+        log.setLevel(logging.INFO)  # the test double never logs request headers
+        self._server = await websockets.serve(self._handler, self.host, self.port, max_size=4 * 1024 * 1024, logger=log)
         self.port = self._server.sockets[0].getsockname()[1]
 
     async def stop(self) -> None:
@@ -94,11 +102,13 @@ class MockGptLiveServer:
     async def _handler(self, ws: Any) -> None:
         self.connections += 1
         path = ws.request.path
-        self.auth_headers.append(bool(ws.request.headers.get("Authorization")))
-        m = re.fullmatch(r"/v1/live/sessions/([\w-]+)/attach", path)
+        h = ws.request.headers
+        self.auth_headers.append(bool(h.get("Authorization") or h.get("api-key")))
+        self.auth_kinds.append("api-key" if h.get("api-key") else ("bearer" if h.get("Authorization") else "none"))
+        m = re.fullmatch(r"(/openai)?/v1/live/sessions/([\w-]+)/attach", path)
         if m:
-            await self._attach(ws, m.group(1))
-        elif path == "/v1/live/sessions":
+            await self._attach(ws, m.group(2))
+        elif path in ("/v1/live/sessions", "/openai/v1/live/sessions"):  # OpenAI and Azure OpenAI paths
             await self._primary(ws)
         else:
             await ws.close(code=4404)
@@ -126,7 +136,11 @@ class MockGptLiveServer:
         first = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
         cfg = first.get("session") or {}
         fmt = (cfg.get("audio") or {}).get("format") or {}
-        if first.get("type") != "session.start" or cfg.get("model") != "gpt-live-1" or fmt.get("rate") != RATE:
+        self.models.append(str(cfg.get("model")))
+        self.session_keys.append(sorted(cfg))
+        rate = fmt.get("rate")
+        self.rates.append(int(rate) if isinstance(rate, int) else 0)
+        if first.get("type") != "session.start" or not cfg.get("model") or rate not in (16000, 24000):
             await ws.send(
                 json.dumps(
                     {
@@ -143,6 +157,11 @@ class MockGptLiveServer:
                 )
             )
             await ws.close()
+            return
+        if "[mock:nostart]" in str(cfg.get("instructions") or ""):  # accept the connection, never start the session
+            with contextlib.suppress(Exception):
+                async for _ in ws:
+                    pass
             return
         s = MockSession(f"live_mock_{uuid.uuid4().hex[:12]}", time.monotonic(), str(cfg.get("instructions") or ""))
         self.sessions[s.id] = s
@@ -169,7 +188,12 @@ class MockGptLiveServer:
             async with lock:
                 await ws.send(json.dumps(ev))
 
-        async def speak(pcm: bytes, text: str) -> None:
+        from app.voice.live_providers import resample
+
+        chunk = int(rate) // 10 * 2  # 100 ms at the session's rate
+
+        async def speak(pcm16k: bytes, text: str) -> None:
+            pcm = resample(pcm16k, RATE, int(rate))
             speaking["cut"] = False
             await send(
                 {
@@ -181,13 +205,13 @@ class MockGptLiveServer:
                 }
             )
             t0 = time.monotonic()
-            for i in range(0, len(pcm), CHUNK):
+            for i in range(0, len(pcm), chunk):
                 if speaking["cut"]:
                     return
                 await send(
-                    {"type": "session.output_audio.delta", "delta": base64.b64encode(pcm[i : i + CHUNK]).decode()}
+                    {"type": "session.output_audio.delta", "delta": base64.b64encode(pcm[i : i + chunk]).decode()}
                 )
-                await asyncio.sleep(max(0.0, t0 + (i // CHUNK + 1) * 0.1 - 0.2 - time.monotonic()))
+                await asyncio.sleep(max(0.0, t0 + (i // chunk + 1) * 0.1 - 0.2 - time.monotonic()))
 
         def say(pcm: bytes, text: str) -> None:
             if speaking["task"] is not None and not speaking["task"].done():

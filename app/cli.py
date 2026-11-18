@@ -158,6 +158,77 @@ def cmd_gpt_live_mock(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_voicelab_report(args: argparse.Namespace) -> int:
+    """Read-only report of one Voice Lab session for the live smoke-test review (no network, no change)."""
+    import json
+
+    from app.voice import lab
+
+    settings = load_settings(args.env_file)
+    engine = make_engine(settings)
+    with engine.connect() as conn:
+        from sqlalchemy.orm import Session
+
+        db = Session(bind=conn)
+        db.execute(text("SET TRANSACTION READ ONLY"))
+        sid = db.execute(text("SELECT id FROM lab_session WHERE session_ref = :r"), {"r": args.session}).scalar()
+        if sid is None:
+            print(f"no lab session {args.session}")  # noqa: T201
+            return 1
+        s = lab.session(db, sid)
+        m = s["metrics"]
+        kinds = [e["event_type"] for e in s["events"]]
+        report = {
+            "session": s["session_ref"],
+            "provider": s["provider"],
+            "model": s["model"],
+            "voice": s["voice"],
+            "spend_class": s["spend_class"],
+            "authorisation": s["authorisation_ref"],
+            "connection": "SUCCEEDED"
+            if "PROVIDER_SESSION_STARTED" in kinds
+            else ("FAILED" if "PROVIDER_CONNECT_FAILED" in kinds else "NOT_STARTED"),
+            "provider_session_id": s["provider_session_id"],
+            "first_audio_ms": m.get("first_audio_ms"),
+            "interruptions": m.get("interruptions"),
+            "interruption_latency_ms": m.get("interruption_latency_ms"),
+            "duration_ms": m.get("duration_ms"),
+            "max_duration_s": s["max_duration_s"],
+            "end_reason": s["end_reason"],
+            "termination": s["termination_status"],
+            "provider_close_reason": m.get("provider_close_reason"),
+            "provider_usage_seconds": str(s["provider_usage_seconds"])
+            if s["provider_usage_seconds"] is not None
+            else None,
+            "usage_source": s["usage_source"],
+            "estimated_max_usd": str(s["estimated_max_usd"]),
+            "reserved_usd": str(s["reserved_usd"]),
+            "reconciled_usd": str(s["reconciled_usd"]) if s["reconciled_usd"] is not None else None,
+            "reservation": s["reservation_status"],
+            "delegations": m.get("delegations"),
+            "instructions_sent": m.get("instructions_sent"),
+            "provider_errors": m.get("provider_errors"),
+            "invalid_provider_events": m.get("invalid_provider_events"),
+            "recording": [
+                {
+                    "track": x["track"],
+                    "seconds": round(x["samples"] / 16000, 1),
+                    "basis": x["basis"],
+                    "purged": bool(x["purged_at"]),
+                }
+                for x in s["media"]
+            ],
+            "transcripts": [
+                {"source": t["source"], "track": t["track"], "chars": len(t["text"])} for t in s["transcripts"]
+            ],
+            "transcript_status": s["transcript_status"],
+            "event_types": sorted(set(kinds)),
+            "events": len(kinds),
+        }
+        print(json.dumps(report, indent=2, default=str))  # noqa: T201
+    return 0
+
+
 def cmd_review_fixture(args: argparse.Namespace) -> int:
     """S3-C: record one scripted synthetic conversation on a synthetic case (development / test only)."""
     import json as _json
@@ -229,6 +300,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     fx.add_argument("--confirm-synthetic", action="store_true")
     fx.set_defaults(func=cmd_review_fixture)
+    rp = sub.add_parser("voicelab-report", help="S1-E.2 read-only report of one Voice Lab session (no network)")
+    rp.add_argument("--session", required=True)
+    rp.set_defaults(func=cmd_voicelab_report)
     mk = sub.add_parser("gpt-live-mock", help="S1-E.2 mocked GPT-Live protocol server (loopback only; no model)")
     mk.add_argument("--port", type=int, default=8765)
     mk.set_defaults(func=cmd_gpt_live_mock)

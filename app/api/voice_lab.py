@@ -38,6 +38,7 @@ from app.security import csrf
 from app.security.authz import AuthContext, authenticate, get_db, request_meta, require, resolve_auth
 from app.voice import gpt_live, lab
 from app.voice import lab_cost as lc
+from app.voice import live_providers as lp
 from app.voice.media import _wav_header
 from app.voice.mock import MockVoiceProvider
 from app.voice.provider import FRAME_MS, SAMPLE_RATE, Inbound, SessionStats
@@ -69,6 +70,9 @@ class LabProviderOut(_M):
     voices: list[str]
     rate_card: dict[str, Any]
     network: bool
+    vendor: str | None = None
+    preferred: bool = False
+    hidden: bool = False
 
 
 class LabUsage(_M):
@@ -150,8 +154,26 @@ class LabGptLiveConfig(_M):
     api_key_configured: bool
     endpoint_host: str
     mock_endpoint_configured: bool
+    mock_profile: str
     close_timeout_s: float
     protocol_notes: str
+
+
+class LabAzureConfig(_M):
+    mode: str
+    endpoint_host: str | None
+    deployment: str | None
+    auth: str
+    credential_configured: bool
+    entra_available: bool
+    entra_scope: str
+    audio_rate: int
+    deployment_type: str | None
+    region: str | None
+    price_usd_per_min: Decimal | None
+    price_source: str | None
+    price_verified_on: str | None
+    missing: list[str]
 
 
 class LabSettingsOut(_M):
@@ -162,6 +184,7 @@ class LabSettingsOut(_M):
     history: list[LabConfigChange]
     authorisations: list[LabPaidAuthorisationOut]
     gpt_live: LabGptLiveConfig
+    azure: LabAzureConfig
     retention_hours: int
     recording_available: bool
     transcription_available: bool
@@ -478,8 +501,8 @@ class LabPaidSwitchIn(BaseModel):
 
 
 class LabPaidAuthorisationIn(BaseModel):
-    provider: Literal["GPT_LIVE"] = "GPT_LIVE"
-    model: str = Field("gpt-live-1", max_length=80)
+    provider: Literal["AZURE_OPENAI_GPT_LIVE", "OPENAI_GPT_LIVE"] = "AZURE_OPENAI_GPT_LIVE"
+    model: str = Field(min_length=1, max_length=80)  # Azure: the deployment name; OpenAI: gpt-live-1
     voice: str = Field("marin", max_length=80)
     max_duration_s: int = Field(120, ge=10, le=120)
     expires_in_h: int = Field(24, ge=1, le=72)
@@ -600,10 +623,32 @@ def get_settings(
             api_key_configured=st.voice_lab_openai_api_key is not None,
             endpoint_host=urlparse(st.voice_lab_gpt_live_url).hostname or "",
             mock_endpoint_configured=bool(st.voice_lab_gpt_live_mock_url),
+            mock_profile=st.voice_lab_gpt_live_mock_profile,
             close_timeout_s=st.voice_lab_close_timeout_s,
             protocol_notes="Call360-specs/docs/integrations/GPT_LIVE_PROTOCOL_NOTES.md",
         ),
         retention_hours=st.recording_retention_hours,
+        azure=LabAzureConfig(
+            mode=st.voice_lab_azure_gpt_live_mode,
+            endpoint_host=urlparse(lp.azure_url(st.voice_lab_azure_openai_endpoint)).hostname
+            if st.voice_lab_azure_openai_endpoint
+            else None,
+            deployment=st.voice_lab_azure_openai_deployment,
+            auth=st.voice_lab_azure_auth,
+            credential_configured=st.voice_lab_azure_openai_api_key is not None
+            if st.voice_lab_azure_auth == "API_KEY"
+            else lp.entra_available(),
+            entra_available=lp.entra_available(),
+            entra_scope=st.voice_lab_azure_entra_scope,
+            audio_rate=st.voice_lab_azure_audio_rate,
+            deployment_type=st.voice_lab_azure_deployment_type,
+            region=st.voice_lab_azure_region,
+            price_usd_per_min=st.voice_lab_azure_price_usd_per_min,
+            price_source=st.voice_lab_azure_price_source,
+            price_verified_on=st.voice_lab_azure_price_verified_on,
+            missing=lp.azure_missing(st)
+            + ([] if st.voice_lab_azure_price_usd_per_min is not None else ["no verified Azure price"]),
+        ),
         recording_available=_recording_ok(request.app),
         transcription_available=request.app.state.settings.transcription_model_dir is not None,
         mock_message=lab.mock_message(),
@@ -1337,8 +1382,9 @@ async def lab_stream(websocket: WebSocket, session_id: uuid.UUID) -> None:
     gpt: gpt_live.GptLiveProvider | None = None
     provider: Any
     if s["provider"] in lab.GPT_PROVIDERS:
-        gpt = gpt_live_provider(app, s, pv)
+        gpt = await gpt_live_provider(app, s, pv)
         provider = gpt
+        await channel.trace("PROVIDER_ENDPOINT", "SERVER", **gpt.endpoint_info)
     else:
         provider = MockVoiceProvider()
     try:
@@ -1450,11 +1496,13 @@ def _transcribe_safely(app: Any, session_id: uuid.UUID) -> None:
 
 
 # ---- GPT-Live adapter (S1-E.2) -------------------------------------------------------------------------------------
-async def guarded_connect(app: Any, url: str, headers: dict[str, str], *, mock: bool) -> gpt_live.Connection:
-    """The only way the adapter reaches the network: the URL is re-checked here, every attempt is logged (host only)
-    and tests substitute ``app.state.gpt_live_connect``."""
+async def guarded_connect(
+    app: Any, url: str, headers: dict[str, str], *, mock: bool, vendor: str
+) -> gpt_live.Connection:
+    """The only way the adapter reaches the network: the URL is re-checked for the provider's vendor here, every
+    attempt is logged (host only) and tests substitute ``app.state.gpt_live_connect``."""
     st = app.state.settings
-    if not gpt_live.allowed_url(url, app_env=st.app_env, mock=mock):
+    if not gpt_live.allowed_url(url, app_env=st.app_env, mock=mock, vendor=vendor):
         raise gpt_live.GptLiveError("refused: URL not allowed")
     attempts = getattr(app.state, "gpt_live_connect_log", None)
     if attempts is None:
@@ -1465,26 +1513,41 @@ async def guarded_connect(app: Any, url: str, headers: dict[str, str], *, mock: 
     return conn
 
 
-def gpt_live_provider(app: Any, s: dict[str, Any], pv: dict[str, Any]) -> gpt_live.GptLiveProvider:
+async def resolve_endpoint(app: Any, code: str, model: str) -> lp.Endpoint:
+    """Endpoint and credentials for one connection (an Entra token request runs off the event loop)."""
+    credential = getattr(app.state, "azure_credential", None)  # tests inject a fake credential
+    return await asyncio.to_thread(lp.endpoint, code, app.state.settings, model=model, credential=credential)
+
+
+async def gpt_live_provider(app: Any, s: dict[str, Any], pv: dict[str, Any]) -> gpt_live.GptLiveProvider:
     st = app.state.settings
-    mock = s["provider"] == "GPT_LIVE_MOCK"
-    url = st.voice_lab_gpt_live_mock_url if mock else st.voice_lab_gpt_live_url
-    key = None if mock else (st.voice_lab_openai_api_key.get_secret_value() if st.voice_lab_openai_api_key else None)
+    try:
+        ep: lp.Endpoint | None = await resolve_endpoint(app, s["provider"], s["model"])
+    except lp.EndpointError as exc:
+        log.warning("GPT-Live endpoint unavailable for %s: %s", s["session_ref"], exc.code)
+        ep = None
 
     async def connect(u: str, h: dict[str, str]) -> gpt_live.Connection:
-        return await guarded_connect(app, u, h, mock=mock)
+        if ep is None:
+            raise gpt_live.GptLiveError("endpoint not configured")
+        return await guarded_connect(app, u, h, mock=ep.mock, vendor=ep.vendor)
 
     cfg = gpt_live.LiveConfig(
-        url=str(url),
-        api_key=key,
-        model=s["model"],
+        url=ep.url if ep else "",
+        headers=ep.headers if ep else {},
+        model=ep.model if ep else s["model"],
         voice=s["voice"],
         instructions=pv["system_prompt"],
         turn_instructions=list(pv["turn_instructions"]),
         max_duration_s=float(s["max_duration_s"]),
         close_timeout_s=st.voice_lab_close_timeout_s,
+        start_timeout_s=st.voice_lab_start_timeout_s,
+        wire_rate=ep.wire_rate if ep else 16000,
+        store=None if ep and ep.vendor == "AZURE" else False,
     )
-    return gpt_live.GptLiveProvider(cfg, connect=connect, label=s["provider"])
+    provider = gpt_live.GptLiveProvider(cfg, connect=connect, label=s["provider"])
+    provider.endpoint_info = ep.describe() if ep else {"error": "endpoint not configured"}  # non-secret
+    return provider
 
 
 @router.post(
@@ -1639,18 +1702,16 @@ async def provider_close(
     if not s["provider_session_id"]:
         raise AppError(409, "NO_PROVIDER_SESSION_ID", "The provider session id is unknown; confirm usage manually")
     st = request.app.state.settings
-    mock = s["provider"] == "GPT_LIVE_MOCK"
-    base = st.voice_lab_gpt_live_mock_url if mock else st.voice_lab_gpt_live_url
-    p = lc.resolve(s["provider"], st)
-    if not p.available or not base:
-        raise AppError(409, "PROVIDER_NOT_AVAILABLE", p.reason)
-    key = None if mock else (st.voice_lab_openai_api_key.get_secret_value() if st.voice_lab_openai_api_key else None)
+    try:
+        ep = await resolve_endpoint(request.app, s["provider"], s["model"])
+    except lp.EndpointError as exc:
+        raise AppError(409, "PROVIDER_NOT_AVAILABLE", exc.message) from exc
 
     async def connect(u: str, h: dict[str, str]) -> gpt_live.Connection:
-        return await guarded_connect(request.app, u, h, mock=mock)
+        return await guarded_connect(request.app, u, h, mock=ep.mock, vendor=ep.vendor)
 
     ok, seconds, why = await gpt_live.close_orphan(
-        str(base), key, s["provider_session_id"], timeout_s=st.voice_lab_close_timeout_s, connect=connect
+        ep.attach_base, ep.headers, s["provider_session_id"], timeout_s=st.voice_lab_close_timeout_s, connect=connect
     )
 
     def _settle() -> dict[str, Any]:

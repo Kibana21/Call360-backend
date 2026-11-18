@@ -104,6 +104,9 @@ class Provider:
     rates: RateCard
     network: bool = False
     notes: tuple[str, ...] = field(default_factory=tuple)
+    vendor: str | None = None
+    preferred: bool = False
+    hidden: bool = False
 
 
 ZERO = RateCard(Decimal(0), Decimal(0), "Keyless local mock: no external service, no charge", "Call360 code")
@@ -114,6 +117,13 @@ SYNTHETIC = RateCard(
     "Call360 S1-E.1 test configuration",
 )
 UNKNOWN = RateCard(None, None, "Not configured: current official provider pricing has not been verified", "—")
+AZURE_UNKNOWN = RateCard(
+    None,
+    None,
+    'UNKNOWN — the Azure OpenAI pricing page shows no GPT-Live amount ("$-/per 1 unit hour" for Global and Data Zone, '
+    "read 2026-11-18); configure the price verified for your subscription. The direct OpenAI price is not reused",
+    "azure.microsoft.com/en-us/pricing/details/azure-openai/ (no amount shown)",
+)
 GPT_LIVE_RATE = RateCard(
     Decimal(0),
     Decimal(0),
@@ -155,17 +165,47 @@ PROVIDERS: dict[str, Provider] = {
         ("synthetic-fixed",),
         SYNTHETIC,
     ),
-    "GPT_LIVE": Provider(
-        "GPT_LIVE",
-        "GPT-Live (real provider, paid)",
+    "AZURE_OPENAI_GPT_LIVE": Provider(
+        "AZURE_OPENAI_GPT_LIVE",
+        "Azure OpenAI GPT-Live (preferred, paid)",
+        "PAID",
+        False,
+        "Disabled until configured: VOICE_LAB_AZURE_GPT_LIVE_MODE=LIVE, endpoint, deployment, backend-only "
+        "credential and a verified Azure price; each session also needs the paid switch and a single-use "
+        "smoke-test authorisation",
+        (),
+        GPT_VOICES,
+        AZURE_UNKNOWN,
+        network=True,
+        vendor="AZURE",
+        preferred=True,
+    ),
+    "OPENAI_GPT_LIVE": Provider(
+        "OPENAI_GPT_LIVE",
+        "OpenAI GPT-Live (direct, paid)",
         "PAID",
         False,
         "Disabled: paid access needs VOICE_LAB_GPT_LIVE_MODE=LIVE, a backend-only API key, the Voice Lab paid switch "
-        "and a single-use smoke-test authorisation (S1-E.2 is offline-verified only)",
+        "and a single-use smoke-test authorisation",
         ("gpt-live-1",),
         GPT_VOICES,
         GPT_LIVE_RATE,
         network=True,
+        vendor="OPENAI",
+    ),
+    # The S1-E.2 code for the direct OpenAI provider: kept so recorded prompt versions still resolve; not offered.
+    "GPT_LIVE": Provider(
+        "GPT_LIVE",
+        "OpenAI GPT-Live (legacy code GPT_LIVE — use OPENAI_GPT_LIVE)",
+        "PAID",
+        False,
+        "Legacy provider code (S1-E.2); behaves as OPENAI_GPT_LIVE",
+        ("gpt-live-1",),
+        GPT_VOICES,
+        GPT_LIVE_RATE,
+        network=True,
+        vendor="OPENAI",
+        hidden=True,
     ),
     "GPT_LIVE_MOCK": Provider(
         "GPT_LIVE_MOCK",
@@ -180,30 +220,65 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 
+def azure_rate(settings: Any) -> RateCard:
+    """Azure's rate card comes only from the owner's verified configuration — never from the direct OpenAI price.
+    Unknown → every Azure session and authorisation is refused (COST_UNKNOWN, fail closed)."""
+    price = settings.voice_lab_azure_price_usd_per_min
+    if price is None:
+        return AZURE_UNKNOWN
+    kind = settings.voice_lab_azure_deployment_type or "deployment type not stated"
+    return RateCard(
+        Decimal(0),
+        Decimal(0),
+        f"Azure OpenAI GPT-Live voice rate configured by the owner ({kind}"
+        f"{', ' + settings.voice_lab_azure_region if settings.voice_lab_azure_region else ''}); the budget covers the "
+        "voice session only",
+        str(settings.voice_lab_azure_price_source),
+        session_per_min=Decimal(str(price)),
+        verified_on=str(settings.voice_lab_azure_price_verified_on),
+    )
+
+
 def resolve(code: str, settings: Any) -> Provider:
     """The provider with its availability on this server (configuration, never the browser, decides)."""
+    from app.voice import live_providers as lp
+
     p = provider(code)
-    if code == "GPT_LIVE":
+    tail = "A paid session also needs the Voice Lab paid switch and a single-use smoke-test authorisation"
+    if code in ("OPENAI_GPT_LIVE", "GPT_LIVE"):
         missing = []
         if settings.voice_lab_gpt_live_mode != "LIVE":
             missing.append("VOICE_LAB_GPT_LIVE_MODE is not LIVE")
         if settings.voice_lab_openai_api_key is None:
             missing.append("no backend API key is configured")
         if missing:
-            return replace(
-                p,
-                available=False,
-                reason=f"Not configured on this server: {'; '.join(missing)}. "
-                "A paid session also needs the Voice Lab paid switch and a single-use smoke-test "
-                "authorisation (S1-E.2 is verified offline only)",
-            )
+            return replace(p, available=False, reason=f"Not configured on this server: {'; '.join(missing)}. {tail}")
         return replace(
             p,
             available=True,
             reason="Configured on this server; every session still needs the paid "
             "switch, a single-use smoke-test authorisation and the PAID budget",
         )
+    if code == "AZURE_OPENAI_GPT_LIVE":
+        dep = settings.voice_lab_azure_openai_deployment
+        rates = azure_rate(settings)
+        p = replace(p, models=(dep,) if dep else (), rates=rates)
+        missing = lp.azure_missing(settings)
+        if not rates.known:
+            missing.append("no verified Azure price is configured (VOICE_LAB_AZURE_PRICE_USD_PER_MIN) — refused")
+        if missing:
+            return replace(p, available=False, reason=f"Not configured on this server: {'; '.join(missing)}. {tail}")
+        return replace(
+            p,
+            available=True,
+            reason=f"Configured on this server (deployment {dep}, "
+            f"{settings.voice_lab_azure_auth}, {settings.voice_lab_azure_audio_rate} Hz); every session "
+            "still needs the paid switch, a single-use smoke-test authorisation and the PAID budget",
+        )
     if code == "GPT_LIVE_MOCK":
+        prof = settings.voice_lab_gpt_live_mock_profile
+        name = "Azure OpenAI" if prof == "AZURE" else "OpenAI"
+        p = replace(p, label=f"GPT-Live adapter on a mocked protocol server ({name} profile)", vendor=prof)
         if not settings.voice_lab_gpt_live_mock_url:
             return replace(p, reason="Not configured: VOICE_LAB_GPT_LIVE_MOCK_URL (loopback) is not set")
         return replace(p, available=True)

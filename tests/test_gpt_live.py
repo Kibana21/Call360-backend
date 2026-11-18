@@ -399,22 +399,39 @@ def test_paid_gates_single_use_authorisation_and_crash_recovery(
         interactive_max_s=300,
         idle_timeout_s=15,
     )
-    pv = gpt_prompt(user_c, "GPT_LIVE")
+    pv = gpt_prompt(user_c, "OPENAI_GPT_LIVE")
     e = refused(user_c, "/sessions", {"prompt_version_id": pv})
     msgs = " ".join(d["message"] for d in e["details"])
     assert e["code"] == "PAID_DISABLED" and "SMOKE_TEST_NOT_AUTHORISED" in msgs
     post(admin_c, "/paid-switch", {"enabled": True, "reason": "Offline paid-path test"})
     assert refused(user_c, "/sessions", {"prompt_version_id": pv})["code"] == "SMOKE_TEST_NOT_AUTHORISED"
-    a = post(admin_c, "/paid-authorisations", {"reason": "First smoke test (offline mock)", "max_duration_s": 120}, 201)
+    a = post(
+        admin_c,
+        "/paid-authorisations",
+        {
+            "provider": "OPENAI_GPT_LIVE",
+            "model": "gpt-live-1",
+            "reason": "First smoke test (offline mock)",
+            "max_duration_s": 120,
+        },
+        201,
+    )
     assert a["status"] == "ISSUED" and a["max_usd"] == "0.1000" and a["max_sessions"] == 1
-    assert refused(admin_c, "/paid-authorisations", {"reason": "Second one"})["code"] == "AUTHORISATION_EXISTS"
+    assert (
+        refused(
+            admin_c,
+            "/paid-authorisations",
+            {"provider": "OPENAI_GPT_LIVE", "model": "gpt-live-1", "reason": "Second one"},
+        )["code"]
+        == "AUTHORISATION_EXISTS"
+    )
     assert (
         admin_c.post(
             "/api/v1/voice-lab/sessions", json={"prompt_version_id": pv}, headers=csrf_header(admin_c)
         ).status_code
         == 403
     )  # the authoriser cannot execute
-    other = gpt_prompt(user_c, "GPT_LIVE", voice="quartz")
+    other = gpt_prompt(user_c, "OPENAI_GPT_LIVE", voice="quartz")
     assert refused(user_c, "/sessions", {"prompt_version_id": other})["code"] == "AUTHORISATION_MISMATCH"
     with make_session_factory(engine)() as db:  # self-execution is refused even for a user holding both roles
         with pytest.raises(lab.LabError) as exc:
@@ -444,7 +461,12 @@ def test_paid_gates_single_use_authorisation_and_crash_recovery(
     for body in (ok(user_c.get("/api/v1/voice-lab/settings")), out, ok(user_c.get("/api/v1/voice-lab/sessions"))):
         assert FAKE_KEY not in json.dumps(body)  # never returned
     # Crash recovery: a paid session that had connected keeps its reservation until a manager confirms usage.
-    a2 = post(admin_c, "/paid-authorisations", {"reason": "Crash recovery test", "max_duration_s": 60}, 201)
+    a2 = post(
+        admin_c,
+        "/paid-authorisations",
+        {"provider": "OPENAI_GPT_LIVE", "model": "gpt-live-1", "reason": "Crash recovery test", "max_duration_s": 60},
+        201,
+    )
     s2 = post(user_c, "/sessions", {"prompt_version_id": pv}, 201)
     with make_session_factory(engine)() as db, db.begin():
         lab.mark_live(db, uuid.UUID(s2["id"]))
@@ -453,7 +475,17 @@ def test_paid_gates_single_use_authorisation_and_crash_recovery(
     r = session(user_c, s2["id"])
     assert r["end_reason"] == "SERVER_RESTART" and r["termination_status"] == "UNCONFIRMED"
     assert r["reservation_status"] == "HELD"
-    a3 = post(admin_c, "/paid-authorisations", {"reason": "Blocked by the held reservation", "max_duration_s": 60}, 201)
+    a3 = post(
+        admin_c,
+        "/paid-authorisations",
+        {
+            "provider": "OPENAI_GPT_LIVE",
+            "model": "gpt-live-1",
+            "reason": "Blocked by the held reservation",
+            "max_duration_s": 60,
+        },
+        201,
+    )
     assert refused(user_c, "/sessions", {"prompt_version_id": pv})["code"] == "CONCURRENCY_LIMIT"
     revoked = post(admin_c, f"/paid-authorisations/{a3['id']}/revoke", {"reason": "Not needed"})
     assert revoked["status"] == "REVOKED" and a2["authorisation_ref"] != a3["authorisation_ref"]
@@ -484,14 +516,14 @@ def test_disabled_configuration_never_connects(
         assert login(c, make_account(db, "LOCAL_USER_SG", prefix="glusr")).status_code == 200
         st = ok(c.get("/api/v1/voice-lab/settings"))
         prov = {p["code"]: p for p in st["providers"]}
-        assert not prov["GPT_LIVE"]["available"] and not prov["GPT_LIVE_MOCK"]["available"]
+        assert not prov["OPENAI_GPT_LIVE"]["available"] and not prov["GPT_LIVE_MOCK"]["available"]
         assert st["gpt_live"] == {
             **st["gpt_live"],
             "mode": "DISABLED",
             "api_key_configured": False,
             "endpoint_host": "api.openai.com",
         }
-        for provider in ("GPT_LIVE", "GPT_LIVE_MOCK"):
+        for provider in ("OPENAI_GPT_LIVE", "GPT_LIVE_MOCK"):
             e = refused(c, "/sessions", {"prompt_version_id": gpt_prompt(c, provider)})
             assert e["code"] in ("PAID_DISABLED", "PROVIDER_NOT_AVAILABLE")
     assert calls == [] and getattr(a.state, "gpt_live_connect_log", []) == []

@@ -155,13 +155,16 @@ def test_paid_access_is_disabled_and_fails_closed(lab_user: TestClient, lab_admi
         "kill_switch": False,
     }
     live = {p["code"]: p for p in s["providers"]}
-    assert live["GPT_LIVE"]["available"] is False and live["GPT_LIVE"]["rate_card"]["session_usd_per_min"] == "0.05"
+    assert (
+        live["OPENAI_GPT_LIVE"]["available"] is False
+        and live["OPENAI_GPT_LIVE"]["rate_card"]["session_usd_per_min"] == "0.05"
+    )
     assert s["gpt_live"]["mode"] == "DISABLED" and s["gpt_live"]["api_key_configured"] is False
     assert live["MOCK"]["spend_class"] == "NONE" and live["MOCK_METERED"]["spend_class"] == "SIMULATED"
     assert s["paid_spend"] == {"paid_reservations": 0, "paid_usd": "0", "paid_sessions": 0, "paid_experiments": 0}
     assert db.execute(text(f"SELECT count(*) FROM {SCHEMA}.lab_session")).scalar_one() == 0
     # A paid provider can be configured in a prompt, but a session or experiment with it is refused (and audited).
-    p = prompt(lab_user, "GPT_LIVE", model="gpt-live-1", voice="marin")
+    p = prompt(lab_user, "OPENAI_GPT_LIVE", model="gpt-live-1", voice="marin")
     e = refused(lab_user, "/sessions", {"prompt_version_id": p["versions"][0]["id"]})
     assert e["code"] == "PAID_DISABLED" and any("PROVIDER_NOT_AVAILABLE" in d["message"] for d in e["details"])
     assert any("SMOKE_TEST_NOT_AUTHORISED" in d["message"] for d in e["details"])
