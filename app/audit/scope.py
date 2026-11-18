@@ -36,6 +36,12 @@ _OUT_OF_SCOPE_ENTITY = """(
        AND f.market_code <> ALL(:scope_markets)))
   OR (audit_event.entity_type = 'assignment_rule_draft' AND EXISTS (SELECT 1 FROM assignment_rule_draft d
      WHERE CAST(d.id AS text) = audit_event.entity_id AND d.market_code <> ALL(:scope_markets)))
+  OR (audit_event.entity_type = 'simulation_scenario' AND EXISTS (SELECT 1 FROM simulation_scenario x
+     WHERE (CAST(x.id AS text) = audit_event.entity_id OR x.scenario_ref = audit_event.entity_id)
+       AND x.market_code <> ALL(:scope_markets)))
+  OR (audit_event.entity_type = 'simulation_batch' AND EXISTS (SELECT 1 FROM simulation_batch b
+     WHERE (CAST(b.id AS text) = audit_event.entity_id OR b.batch_ref = audit_event.entity_id)
+       AND b.market_code <> ALL(:scope_markets)))
 )"""
 
 # The payload names an out-of-scope policy, sale or case reference.

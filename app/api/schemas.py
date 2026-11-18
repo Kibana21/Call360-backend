@@ -1136,6 +1136,11 @@ class ScriptQuestionOut(BaseModel):
     evidence_required: bool
     max_reprompts: int
     escalation_rule_ref: str | None
+    # S2-D.1 lifecycle (defaults for seeded and earlier revisions: a verification item)
+    lifecycle_role: str = "VERIFICATION"
+    on_failure: str = "CONTINUE"
+    discloses_policy_information: bool = False
+    deliver_on_termination: bool = False
 
 
 class ScriptSectionOut(BaseModel):
@@ -2184,7 +2189,10 @@ class SectionCreate(BaseModel):
     module_id: uuid.UUID | None = None  # reuse a published module
     module_code: str | None = None  # or create a new one
     module_name: str | None = None
-    module_kind: Literal["COMMON", "PRODUCT", "RISK", "LANGUAGE"] | None = None
+    module_kind: (
+        Literal["COMMON", "PRODUCT", "RISK", "LANGUAGE", "OPENING", "IDENTITY", "DISCLOSURE", "CONSENT", "CLOSING"]
+        | None
+    ) = None
     inclusion_condition: Condition = None
 
 
@@ -2199,6 +2207,17 @@ class OrderIn(BaseModel):
     order: list[uuid.UUID] = Field(min_length=1)
 
 
+class EvaluationRuleIn(BaseModel):
+    """S3-A structured evaluation rule (validated against the answer type, governed operators, units and facts)."""
+
+    operator: Literal["EQ", "GTE", "LTE", "GT", "LT"] | None = None
+    value: str | float | int | None = None
+    unit: Literal["YEARS", "MONTHS", "SGD", "COUNT"] | None = None
+    tolerance: str | float | int | None = None
+    tolerance_reference: str | None = Field(default=None, max_length=120)
+    accepted: list[str] = Field(default_factory=list, max_length=20)
+
+
 class QuestionContent(BaseModel):
     intent: str
     category: str = "OTHER"
@@ -2208,9 +2227,17 @@ class QuestionContent(BaseModel):
     enum_options: list[str] = Field(default_factory=list, max_length=20)
     mandatory: bool
     expected_answer_policy: Literal[
-        "EXACT_BOOLEAN", "NUMERIC_MATCH_POLICY_FACT", "ACKNOWLEDGEMENT", "NARRATIVE_REVIEW", "COLLECT_ONLY"
+        "EXACT_BOOLEAN",
+        "ACKNOWLEDGEMENT",
+        "NUMERIC_COMPARE",
+        "NUMERIC_MATCH_POLICY_FACT",
+        "ENUM_MATCH",
+        "ENUM_MATCH_POLICY_FACT",
+        "NARRATIVE_REVIEW",
+        "COLLECT_ONLY",
     ]
     expected_boolean: bool | None = None
+    evaluation: EvaluationRuleIn | None = None
     policy_fact_key: str | None = None
     acceptable_variants: list[str] = Field(default_factory=list, max_length=20)
     unacceptable_outcomes: list[str] = Field(default_factory=list, max_length=20)
@@ -2218,6 +2245,11 @@ class QuestionContent(BaseModel):
     evidence_required: bool | None = None
     escalation_rule_ref: str | None = None
     max_reprompts: int = 1
+    # S2-D.1 conversation lifecycle (validated against the system-enforced policies)
+    lifecycle_role: str | None = Field(default=None, max_length=32)
+    on_failure: str | None = Field(default=None, max_length=40)
+    discloses_policy_information: bool = False
+    deliver_on_termination: bool = False
 
 
 class QuestionAdd(BaseModel):
@@ -2400,6 +2432,10 @@ class AuthoringOptions(BaseModel):
     expected_answer_policies: list[str]
     module_kinds: list[str]
     published_modules: list[ModuleOption]
+    # S2-D.1: lifecycle stages, roles and the system-enforced gate policies (synthetic development assumptions)
+    lifecycle: dict[str, Any] = Field(default_factory=dict)
+    # S3-A: evaluation methods per answer type, operators, units and the approved fact mappings
+    evaluation: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---- S2-B: editable script-assignment rules (SCR-011, SUR-006/007 for rules) -------------------------------------
@@ -2881,4 +2917,493 @@ class AssignmentBatchOut(BaseModel):
     cases: int
     summary: dict[str, int]
     results: list[AssignmentBatchCase]
+    note: str
+
+
+# ---- S2-D: deterministic question controller — text simulation (SUR-008, VOICE-011) -----------------------------
+class SimEligibleCase(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    state: str
+    script_label: str
+    origin: str
+    simulations: int
+
+
+class SimEligibleCases(BaseModel):
+    items: list[SimEligibleCase]
+
+
+class SimContactOut(BaseModel):
+    selection_id: str
+    role: str
+    label: str
+    assignment_contact: bool
+
+
+class SimPlanSection(BaseModel):
+    module_code: str
+    name: str
+    kind: str
+    position: int
+    included: bool
+    condition: str
+    stage: str = "VERIFICATION"
+
+
+class SimPlanQuestion(BaseModel):
+    code: str
+    revision: int
+    section: str
+    section_name: str
+    position: int
+    wording: str
+    answer_type: str
+    options: list[str]
+    mandatory: bool
+    delivery_mode: str
+    max_reprompts: int
+    applicable: bool
+    skip_reason: str | None
+    role: str = "VERIFICATION"
+    stage: str = "VERIFICATION"
+    on_failure: str = "CONTINUE"
+    discloses_policy_information: bool = False
+    deliver_on_termination: bool = False
+
+
+class SimPlanOut(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    script_label: str
+    script_version_id: uuid.UUID
+    script_family_id: uuid.UUID
+    manifest_sha256: str
+    content_approval_status: str
+    facts: dict[str, Any]
+    risk_band: str | None
+    sections: list[SimPlanSection]
+    questions: list[SimPlanQuestion]
+    contacts: list[SimContactOut]
+    note: str
+    identity_gate_configured: bool = False
+    stages: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    # S2-E: TEXT_SIMULATION (the case's pinned script) or VERSION_TEST (a chosen draft / published version)
+    mode: str = "TEXT_SIMULATION"
+    version_status: str | None = None
+    live_eligibility: dict[str, Any] | None = None
+
+
+class SimStartIn(BaseModel):
+    case_id: uuid.UUID
+    contact_selection_id: uuid.UUID | None = None
+    script_version_id: uuid.UUID | None = None  # S2-E version test (draft or published), from a content snapshot
+
+
+class SimActionOut(BaseModel):
+    kind: str
+    action_id: str | None
+    question_code: str | None
+    wording: str | None
+    answer_type: str | None
+    options: list[str]
+    mandatory: bool | None
+    verbatim_required: bool | None
+    presented: bool
+    reprompts_used: int
+    reprompts_allowed: int
+    statement: bool
+    note: str
+    stage: str | None = None
+    role: str | None = None
+    completes_on_delivery: bool = False
+
+
+class SimQuestionState(BaseModel):
+    code: str
+    section: str
+    position: int
+    mandatory: bool
+    answer_type: str
+    status: str
+    requests: int
+    reprompts_used: int
+    reprompts_allowed: int
+    answer: dict[str, Any] | None
+    reason: str | None
+    stage: str = "VERIFICATION"
+    role: str = "VERIFICATION"
+
+
+class SimEventOut(BaseModel):
+    seq: int
+    event_type: str
+    question_code: str | None
+    action_id: str | None
+    data: dict[str, Any]
+    actor: str
+    occurred_at: datetime
+
+
+class SimRunOut(BaseModel):
+    id: uuid.UUID
+    sim_ref: str
+    case_id: uuid.UUID
+    case_ref: str
+    script_label: str
+    script_version_id: uuid.UUID
+    manifest_sha256: str
+    contact_role: str | None
+    status: str
+    outcome: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    next_action: SimActionOut
+    summary: dict[str, Any]
+    lifecycle: dict[str, Any] = Field(default_factory=dict)
+    questions: list[SimQuestionState]
+    trace: list[SimEventOut]
+    replayed: bool = False
+    note: str
+
+
+class SimRunSummary(BaseModel):
+    id: uuid.UUID
+    sim_ref: str
+    status: str
+    outcome: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    contact_role: str | None
+    started_by: str | None
+    mode: str = "TEXT_SIMULATION"
+    script_label: str | None = None
+
+
+class SimRunList(BaseModel):
+    items: list[SimRunSummary]
+
+
+class SimDeliveryIn(BaseModel):
+    action_id: str = Field(max_length=80)
+    delivered: bool
+    note: str | None = Field(default=None, max_length=300)
+
+
+class SimAnswerIn(BaseModel):
+    action_id: str = Field(max_length=80)
+    kind: Literal["ANSWER", "UNCLEAR", "REFUSED", "UNKNOWN"]
+    value: bool | float | int | str | None = None
+    verbatim: str | None = Field(default=None, max_length=2000)
+
+
+class SimClarificationIn(BaseModel):
+    action_id: str = Field(max_length=80)
+    reason: str = Field(max_length=300)
+
+
+class SimSkipIn(BaseModel):
+    action_id: str = Field(max_length=80)
+
+
+class SimEventIn(BaseModel):
+    kind: Literal["WRONG_PERSON", "CALLBACK_REQUESTED", "DECLINED_TO_CONTINUE", "INTERRUPTED"]
+    note: str | None = Field(default=None, max_length=300)
+
+
+class SimEndIn(BaseModel):
+    abandon: bool = False
+    reason: str | None = Field(default=None, max_length=300)
+
+
+# ---- S2-E simulation workbench -------------------------------------------------------------------------------------
+class ScenarioStep(BaseModel):
+    question: str = Field(min_length=1, max_length=60)
+    kind: Literal["ANSWER", "UNCLEAR", "REFUSED", "UNKNOWN", "CLARIFICATION", "NOT_DELIVERED", "DELIVERED", "EVENT"]
+    value: bool | float | int | str | None = None
+    event: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=300)
+
+
+class ScenarioExpectations(BaseModel):
+    outcome: str | None = Field(default=None, max_length=20)
+    termination_reason: str | None = Field(default=None, max_length=60)
+    gates: dict[str, str] = Field(default_factory=dict)
+    mandatory_complete: bool | None = None
+    applicable_questions: list[str] | None = Field(default=None, max_length=300)
+    sequence: list[str] | None = Field(default=None, max_length=300)
+    question_states: dict[str, str] = Field(default_factory=dict)
+    # S3-A: per-question expected answer-evaluation results, and how the expectations were obtained
+    evaluations: dict[str, str] = Field(default_factory=dict)
+    basis: Literal["INDEPENDENT", "GENERATED_BASELINE"] | None = None
+
+
+class ScenarioContent(BaseModel):
+    name: str = Field(min_length=3, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    script_version_id: uuid.UUID
+    facts: dict[str, bool | int | str] = Field(default_factory=dict)
+    risk_band: str | None = Field(default=None, max_length=16)
+    source_case_id: uuid.UUID | None = None
+    steps: list[ScenarioStep] = Field(default_factory=list, max_length=100)
+    expectations: ScenarioExpectations = Field(default_factory=ScenarioExpectations)
+    default_response: Literal["AFFIRMATIVE", "STRICT"] = "AFFIRMATIVE"
+
+
+class ScenarioPreviewIn(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    script_version_id: uuid.UUID
+    facts: dict[str, bool | int | str] = Field(default_factory=dict)
+    risk_band: str | None = Field(default=None, max_length=16)
+    source_case_id: uuid.UUID | None = None
+    steps: list[ScenarioStep] = Field(default_factory=list, max_length=100)
+    expectations: ScenarioExpectations = Field(default_factory=ScenarioExpectations)
+    default_response: Literal["AFFIRMATIVE", "STRICT"] = "AFFIRMATIVE"
+
+
+class ScenarioReviseIn(BaseModel):
+    expected_row_version: int
+    content: ScenarioContent
+    change_note: str | None = Field(default=None, max_length=300)
+
+
+class ScenarioCopyIn(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+
+
+class ScenarioStatusIn(BaseModel):
+    expected_row_version: int
+    status: Literal["ACTIVE", "ARCHIVED"]
+
+
+class ScenarioSummary(BaseModel):
+    id: uuid.UUID
+    scenario_ref: str
+    name: str
+    status: str
+    current_revision: int
+    row_version: int
+    updated_at: datetime
+    family_id: uuid.UUID
+    family: str
+    script_version_id: uuid.UUID
+    version_label: str
+    version_status: str
+    description: str | None
+    default_response: str
+    steps: int
+    last_status: str | None
+    last_run_at: datetime | None
+
+
+class ScenarioList(BaseModel):
+    items: list[ScenarioSummary]
+
+
+class ScenarioRevisionSummary(BaseModel):
+    revision: int
+    created_at: datetime
+    created_by: str | None
+    change_note: str | None
+    version_label: str
+
+
+class ScenarioOut(BaseModel):
+    id: uuid.UUID
+    scenario_ref: str
+    name: str
+    status: str
+    row_version: int
+    family_id: uuid.UUID
+    family: str
+    copied_from_ref: str | None
+    revision: int
+    version_label: str
+    version_status: str
+    script_content_sha256: str
+    source_case_ref: str | None
+    content: ScenarioContent
+    revisions: list[ScenarioRevisionSummary]
+    runs: list[dict[str, Any]]
+
+
+class ScenarioRunIn(BaseModel):
+    scenario_ids: list[uuid.UUID] = Field(min_length=1, max_length=50)
+    script_version_id: uuid.UUID | None = None  # run against this version instead of each scenario's own
+    compare_with_version_id: uuid.UUID | None = None  # version B of a comparison
+
+
+class SimResultOut(BaseModel):
+    id: uuid.UUID
+    side: str
+    scenario_id: uuid.UUID
+    scenario_ref: str
+    scenario_name: str
+    revision: int
+    script_version_id: uuid.UUID
+    version_label: str
+    version_status: str
+    content_sha256: str | None
+    plan_sha256: str | None
+    status: str
+    stale: bool
+    stale_reasons: list[str]
+    problems: list[str]
+    failures: list[dict[str, Any]]
+    error: str | None
+    actual: dict[str, Any]
+    response_log: list[dict[str, Any]]
+    events: list[dict[str, Any]]
+
+
+class SimBatchSummary(BaseModel):
+    id: uuid.UUID
+    batch_ref: str
+    kind: str
+    totals: dict[str, Any]
+    started_at: datetime
+    started_by: str | None
+    version_a: str | None
+    version_b: str | None
+
+
+class SimBatchList(BaseModel):
+    items: list[SimBatchSummary]
+
+
+class SimBatchOut(SimBatchSummary):
+    results: list[SimResultOut]
+    coverage: list[dict[str, Any]]
+    comparison: list[dict[str, Any]]
+    note: str
+
+
+class ScenarioPreviewOut(BaseModel):
+    status: str
+    version_label: str
+    problems: list[str]
+    failures: list[dict[str, Any]]
+    error: str | None
+    stale_reasons: list[str]
+    actual: dict[str, Any]
+    response_log: list[dict[str, Any]]
+
+
+class WorkbenchVersion(BaseModel):
+    id: uuid.UUID
+    version_label: str
+    status: str
+    content_approval_status: str
+    family_id: uuid.UUID
+    family: str
+    family_name: str
+
+
+class WorkbenchVersions(BaseModel):
+    items: list[WorkbenchVersion]
+
+
+class WorkbenchPlanIn(BaseModel):
+    script_version_id: uuid.UUID
+    facts: dict[str, bool | int | str] = Field(default_factory=dict)
+    risk_band: str | None = Field(default=None, max_length=16)
+
+
+class WorkbenchPlanOut(BaseModel):
+    script_version_id: uuid.UUID
+    script_label: str
+    version_status: str
+    content_approval_status: str
+    content_sha256: str
+    live_eligibility: dict[str, Any]
+    sections: list[SimPlanSection]
+    questions: list[SimPlanQuestion]
+
+
+class WorkbenchOptions(BaseModel):
+    step_kinds: list[str]
+    events: dict[str, str]
+    outcomes: list[str]
+    termination_reasons: list[str]
+    gates: list[str]
+    gate_statuses: list[str]
+    question_states: list[str]
+    default_responses: list[str]
+    condition_facts: dict[str, list[Any]]
+    risk_bands: list[str]
+    note: str
+    # S3-A
+    evaluation_results: list[str] = Field(default_factory=list)
+    evaluation_facts: list[str] = Field(default_factory=list)
+    expectation_bases: list[str] = Field(default_factory=list)
+
+
+class CaseFactsOut(BaseModel):
+    case_id: uuid.UUID
+    case_ref: str
+    snapshot_id: uuid.UUID
+    facts: dict[str, Any]
+    risk_band: str | None
+
+
+# ---- S3-A: deterministic answer evaluation (COMP-003, COMP-006, SCR-020) ---------------------------------------
+class AnswerEvaluationItem(BaseModel):
+    question_code: str
+    question_revision_id: str
+    revision: int
+    method: str
+    rule: dict[str, Any]
+    rule_text: str
+    answer: dict[str, Any] | None
+    normalized_answer: Any = None
+    expected: dict[str, Any] | None
+    result: str
+    explanation: str
+    rule_evaluation_equivalent: str
+    stage: str | None = None
+    role: str | None = None
+    mandatory: bool | None = None
+    wording: str | None = None
+
+
+class EvaluationReplay(BaseModel):
+    matches: bool
+    detail: str
+
+
+class SimEvaluationSummary(BaseModel):
+    id: uuid.UUID
+    evaluation_ref: str
+    events_evaluated: int
+    engine_version: str
+    controller_status: str
+    controller_outcome: str | None
+    totals: dict[str, int]
+    created_at: datetime
+    created_by_name: str | None
+
+
+class SimEvaluationList(BaseModel):
+    items: list[SimEvaluationSummary]
+
+
+class SimEvaluationOut(SimEvaluationSummary):
+    run_id: uuid.UUID
+    sim_ref: str
+    case_ref: str
+    mode: str
+    script_version_id: uuid.UUID
+    script_label: str
+    version_status: str
+    content_sha256: str
+    content_source: str
+    policy_fact_snapshot_id: uuid.UUID
+    policy_fact_snapshot_sha256: str
+    input_sha256: str
+    events_sha256: str
+    results: list[AnswerEvaluationItem]
+    replay: EvaluationReplay
+    created: bool = False
     note: str

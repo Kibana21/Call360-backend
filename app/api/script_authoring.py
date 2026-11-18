@@ -46,6 +46,8 @@ from app.api.schemas import (
 )
 from app.audit.chain import write_audit
 from app.core.errors import AppError
+from app.domain import answer_evaluation as ae
+from app.domain import lifecycle as lc
 from app.domain import script_authoring as sa
 from app.security import csrf
 from app.security.authz import AuthContext, get_db, request_meta, require
@@ -809,4 +811,35 @@ def options(auth: AuthContext = Depends(require("script.read")), db: Session = D
         expected_answer_policies=list(sa.POLICIES),
         module_kinds=list(sa.MODULE_KINDS),
         published_modules=[ModuleOption(**dict(m)) for m in modules],
+        evaluation={
+            "engine": ae.ENGINE,
+            "method_answer_types": {m: list(t) for m, t in ae.METHOD_ANSWER_TYPES.items()},
+            "operators": ae.OPERATORS,
+            "units": ae.UNITS,
+            "facts": {
+                k: {kk: (list(vv) if isinstance(vv, tuple) else vv) for kk, vv in f.items()}
+                for k, f in ae.EVALUATION_FACTS.items()
+            },
+            "results": list(ae.RESULTS),
+            "note": "No tolerance or threshold is assumed: comparisons are exact unless an approved tolerance and its "
+            "approval reference are configured and pass maker-checker review. A mismatch is a discrepancy for "
+            "review, not a compliance finding.",
+        },
+        lifecycle={
+            "stages": list(lc.STAGES),
+            "kind_stage": lc.KIND_STAGE,
+            "roles": [
+                {
+                    "role": r,
+                    "stage": lc.ROLE_STAGE[r],
+                    "answer_types": list(lc.ROLE_ANSWER_TYPES.get(r, sa.ANSWER_TYPES)),
+                    "on_failure": list(lc.ALLOWED_ON_FAILURE[r]),
+                    "default_on_failure": lc.DEFAULT_ON_FAILURE[r],
+                    "statement": r in lc.STATEMENT_ROLES,
+                }
+                for r in lc.ROLES
+            ],
+            "events": lc.EVENTS,
+            "assumptions": list(lc.ASSUMPTIONS),
+        },
     )

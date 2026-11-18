@@ -172,6 +172,38 @@ def test_be_sec_01_exact_api_surface(app) -> None:  # type: ignore[no-untyped-de
         ("GET", "/api/v1/cases/{case_id}/script-assignment/preview"),
         ("POST", "/api/v1/cases/{case_id}/script-assignment/apply"),
         ("POST", "/api/v1/script-assignments/run"),
+        # S2-D question controller — text simulation
+        ("GET", "/api/v1/script-simulations/cases"),
+        ("GET", "/api/v1/script-simulations/plan"),
+        ("POST", "/api/v1/script-simulations"),
+        ("GET", "/api/v1/script-simulations/{run_id}"),
+        ("POST", "/api/v1/script-simulations/{run_id}/delivery"),
+        ("POST", "/api/v1/script-simulations/{run_id}/answer"),
+        ("POST", "/api/v1/script-simulations/{run_id}/clarification"),
+        ("POST", "/api/v1/script-simulations/{run_id}/skip"),
+        ("POST", "/api/v1/script-simulations/{run_id}/event"),  # S2-D.1 conversation events
+        ("POST", "/api/v1/script-simulations/{run_id}/end"),
+        ("GET", "/api/v1/cases/{case_id}/script-simulations"),
+        # S2-E simulation workbench
+        ("GET", "/api/v1/script-simulations/{run_id}/as-scenario"),
+        ("GET", "/api/v1/simulation-workbench/options"),
+        ("GET", "/api/v1/simulation-workbench/versions"),
+        ("POST", "/api/v1/simulation-workbench/plan"),
+        ("GET", "/api/v1/simulation-workbench/case-facts"),
+        ("GET", "/api/v1/simulation-scenarios"),
+        ("POST", "/api/v1/simulation-scenarios"),
+        ("POST", "/api/v1/simulation-scenarios/preview"),
+        ("GET", "/api/v1/simulation-scenarios/{scenario_id}"),
+        ("PUT", "/api/v1/simulation-scenarios/{scenario_id}"),
+        ("POST", "/api/v1/simulation-scenarios/{scenario_id}/copy"),
+        ("POST", "/api/v1/simulation-scenarios/{scenario_id}/status"),
+        ("POST", "/api/v1/simulation-runs"),
+        ("GET", "/api/v1/simulation-runs"),
+        ("GET", "/api/v1/simulation-runs/{batch_id}"),
+        # S3-A answer evaluation of simulation runs
+        ("POST", "/api/v1/script-simulations/{run_id}/evaluations"),
+        ("GET", "/api/v1/script-simulations/{run_id}/evaluations"),
+        ("GET", "/api/v1/script-simulations/{run_id}/evaluations/{evaluation_id}"),
         # CP0.4a manual intake (API-080, API-082…085)
         ("GET", "/api/v1/intake/sources"),
         ("GET", "/api/v1/intake/reference"),  # API-087 (CP0.4b)
@@ -423,13 +455,14 @@ def test_be_iam_03_reserved_permissions_never_granted(db: Session) -> None:
                 {"c": code},
             ).scalars()
         )
-        for code in ("script.edit", "script.approve", "script.publish", "script.assign")
+        for code in ("script.edit", "script.approve", "script.publish", "script.assign", "script.simulate")
     }
     assert held == {
         "script.edit": ["USER"],
         "script.approve": ["SC_CHECKER"],
         "script.publish": ["SC_CHECKER"],
         "script.assign": ["USER"],  # S2-C: operations apply deterministic assignment; ADMIN and the checker do not
+        "script.simulate": ["SC_CHECKER", "USER"],  # S2-D text simulation; ADMIN does not
     }
     for code in ("recording.read", "transcript.sensitive.read"):
         assert code not in {p.code for p in reserved}

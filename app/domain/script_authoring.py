@@ -29,15 +29,17 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.domain import answer_evaluation as ae
+from app.domain import lifecycle as lc
 from app.domain.digest import sha256_of
 
 MANIFEST_SCHEMA = "call360.script-manifest/2"
 SOURCE_SYSTEM = "CALL360_SCRIPT_STUDIO"
 OPEN_STATUSES = ("DRAFT", "SUBMITTED_FOR_REVIEW", "APPROVED")
-MODULE_KINDS = ("COMMON", "PRODUCT", "RISK", "LANGUAGE")
+MODULE_KINDS = ("COMMON", "PRODUCT", "RISK", "LANGUAGE", *lc.LIFECYCLE_KINDS)  # S2-D.1 lifecycle stages
 DELIVERY_MODES = ("CONVERSATIONAL", "CONTROLLED_TTS", "EXACT_AUDIO")
 ANSWER_TYPES = ("YES_NO", "NUMERIC", "ENUM", "FREE_TEXT", "ACKNOWLEDGEMENT")
-POLICIES = ("EXACT_BOOLEAN", "NUMERIC_MATCH_POLICY_FACT", "ACKNOWLEDGEMENT", "NARRATIVE_REVIEW", "COLLECT_ONLY")
+POLICIES = ae.METHODS  # S3-A evaluation methods (expected-answer policies)
 CATEGORIES = (
     "SALES_CONDUCT",
     "PRODUCT_UNDERSTANDING",
@@ -55,11 +57,8 @@ CONDITION_FACTS: dict[str, tuple[Any, ...]] = {
     "premium_frequency": ("SINGLE", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUAL"),
 }
 RISK_BANDS = ("LOW", "MEDIUM", "HIGH")
-# Policy facts a NUMERIC_MATCH_POLICY_FACT question may be compared with.
-FACT_KEYS: dict[str, str] = {
-    "premium_term_years": "Premium payment term in years (policy fact snapshot)",
-    "premium_amount": "Premium amount (policy fact snapshot, decimal string)",
-}
+# Policy facts an evaluation rule may be mapped to (S3-A: numeric and enumerated facts of the fact snapshot).
+FACT_KEYS: dict[str, str] = {k: f["label"] for k, f in ae.EVALUATION_FACTS.items()}
 CODE_RE = re.compile(r"^[A-Z][A-Z0-9_-]{2,39}$")
 QUESTION_CODE_RE = re.compile(r"^Q-[A-Z0-9_-]{3,57}$")
 LABEL_RE = re.compile(r"^(\d+)\.(\d+)$")
@@ -154,14 +153,22 @@ QUESTION_FIELDS = (
     "evidence_required",
     "escalation_rule_ref",
     "max_reprompts",
+    # S2-D.1 conversation lifecycle (question_revision_detail)
+    "lifecycle_role",
+    "on_failure",
+    "discloses_policy_information",
+    "deliver_on_termination",
 )
+LIFECYCLE_FIELDS = ("lifecycle_role", "on_failure", "discloses_policy_information", "deliver_on_termination")
 # S2-A.1: intent and category belong to each revision (question_revision_detail), so every content field is a
 # revision field and the shared question_bank_item is never changed by a draft.
 REVISION_FIELDS = QUESTION_FIELDS
 # A question revision with its effective intent and category (seeded revisions have no detail row and use the
 # bank item's values, which the seed set and authoring no longer changes).
 REV_SQL = (
-    "SELECT qr.*, coalesce(d.intent, i.intent) AS rev_intent, coalesce(d.category, i.category) AS rev_category "
+    "SELECT qr.*, coalesce(d.intent, i.intent) AS rev_intent, coalesce(d.category, i.category) AS rev_category, "
+    "d.lifecycle_role, d.on_failure, coalesce(d.discloses_policy_information, false) AS discloses_policy_information, "
+    "coalesce(d.deliver_on_termination, false) AS deliver_on_termination "
     "FROM question_revision qr JOIN question_bank_item i ON i.id = qr.question_bank_item_id "
     "LEFT JOIN question_revision_detail d ON d.question_revision_id = qr.id"
 )
@@ -203,25 +210,17 @@ def normalise_question(q: dict[str, Any]) -> dict[str, Any]:
         schema: dict[str, Any] = {"type": "string", "enum": options}
     else:
         schema = {"type": atype.lower()}
-    expected: Any = None
-    fact_key = q.get("policy_fact_key") or None
-    if policy == "EXACT_BOOLEAN":
-        if atype != "YES_NO":
-            raise bad("An exact yes/no expectation needs a yes/no question")
-        if not isinstance(q.get("expected_boolean"), bool):
-            raise bad("Choose the expected answer (yes or no)")
-        expected = {"value": q["expected_boolean"]}
-    if policy == "NUMERIC_MATCH_POLICY_FACT":
-        if atype != "NUMERIC":
-            raise bad("Matching a policy fact needs a numeric question")
-        if fact_key not in FACT_KEYS:
-            raise bad(f"Choose an approved policy fact ({', '.join(FACT_KEYS)})")
-    else:
-        fact_key = None
-    if policy == "ACKNOWLEDGEMENT" and atype != "ACKNOWLEDGEMENT":
-        raise bad("An acknowledgement expectation needs an acknowledgement question")
-    if policy == "NARRATIVE_REVIEW" and atype != "FREE_TEXT":
-        raise bad("Narrative review needs a free-text question")
+    try:
+        expected, fact_key = ae.configure(
+            policy,
+            atype,
+            options,
+            expected_boolean=q.get("expected_boolean"),
+            evaluation=q.get("evaluation"),
+            fact_key=q.get("policy_fact_key") or None,
+        )
+    except ae.RuleInvalid as exc:
+        raise bad(str(exc)) from exc
     na = q.get("not_applicable_predicate")
     _require_condition(na, "not-applicable condition")
     reprompts = q.get("max_reprompts", 1)
@@ -233,6 +232,8 @@ def normalise_question(q: dict[str, Any]) -> dict[str, Any]:
 
     def clean(xs: Any) -> list[str]:
         return [str(x).strip() for x in (xs or []) if str(x).strip()][:20]
+
+    life = normalise_lifecycle(q, atype, bool(q.get("mandatory")))
 
     return {
         "intent": intent,
@@ -251,6 +252,54 @@ def normalise_question(q: dict[str, Any]) -> dict[str, Any]:
         "evidence_required": bool(q.get("evidence_required", q.get("mandatory"))),
         "escalation_rule_ref": esc,
         "max_reprompts": reprompts,
+        **life,
+    }
+
+
+def normalise_lifecycle(q: dict[str, Any], atype: str | None, mandatory: bool) -> dict[str, Any]:
+    """S2-D.1: the item's lifecycle role and gate behaviour, only within the system-enforced policies."""
+    role = q.get("lifecycle_role") or "VERIFICATION"
+    if role not in lc.ROLES:
+        raise AuthoringError(422, "INVALID_QUESTION", f"Unknown lifecycle role {role}")
+    allowed_types = lc.ROLE_ANSWER_TYPES.get(role)
+    if allowed_types and atype not in allowed_types:
+        raise AuthoringError(
+            422,
+            "INVALID_QUESTION",
+            f"A {role.replace('_', ' ').lower()} must be "
+            f"{' or '.join(t.replace('_', ' ').lower() for t in allowed_types)}",
+        )
+    allowed = lc.ALLOWED_ON_FAILURE[role]
+    on_failure = q.get("on_failure") or lc.DEFAULT_ON_FAILURE[role]
+    if on_failure not in allowed:
+        raise AuthoringError(
+            422,
+            "INVALID_QUESTION",
+            f"On failure, a {role.replace('_', ' ').lower()} may only "
+            f"{' or '.join(a.replace('_', ' ').lower() for a in allowed)} (system-enforced)",
+        )
+    if role == "DISCLOSURE" and mandatory and on_failure != "TERMINATE":
+        raise AuthoringError(
+            422,
+            "INVALID_QUESTION",
+            "A mandatory disclosure that cannot be delivered must terminate the conversation (system-enforced)",
+        )
+    discloses = bool(q.get("discloses_policy_information"))
+    if discloses and lc.ROLE_STAGE[role] in lc.NO_POLICY_DISCLOSURE_STAGES:
+        raise AuthoringError(
+            422,
+            "INVALID_QUESTION",
+            "Opening, identity and closing items must not disclose policy "
+            "information (it is never disclosed before identity is confirmed)",
+        )
+    on_term = bool(q.get("deliver_on_termination"))
+    if on_term and role != "CLOSING_STATEMENT":
+        raise AuthoringError(422, "INVALID_QUESTION", "Only a closing statement can be delivered on termination")
+    return {
+        "lifecycle_role": role,
+        "on_failure": on_failure,
+        "discloses_policy_information": discloses,
+        "deliver_on_termination": on_term,
     }
 
 
@@ -805,19 +854,40 @@ def _insert_revision(
     )
     db.execute(
         text(
-            "INSERT INTO question_revision_detail (question_revision_id, intent, category, created_by) "
-            "VALUES (:r, :i, :c, :by)"
+            "INSERT INTO question_revision_detail (question_revision_id, intent, category, created_by, lifecycle_role, "
+            "on_failure, discloses_policy_information, deliver_on_termination) "
+            "VALUES (:r, :i, :c, :by, :role, :onf, :disc, :term)"
         ),
-        {"r": rid, "i": content["intent"], "c": content["category"], "by": actor_ref},
+        {
+            "r": rid,
+            "i": content["intent"],
+            "c": content["category"],
+            "by": actor_ref,
+            "role": content.get("lifecycle_role") or "VERIFICATION",
+            "onf": content.get("on_failure") or lc.DEFAULT_ON_FAILURE[content.get("lifecycle_role") or "VERIFICATION"],
+            "disc": bool(content.get("discloses_policy_information")),
+            "term": bool(content.get("deliver_on_termination")),
+        },
     )
     return rid
 
 
+def lifecycle_of(r: dict[str, Any]) -> dict[str, Any]:
+    """Lifecycle fields of a revision row (defaults for seeded and pre-S2-D.1 revisions: a verification item)."""
+    role = r.get("lifecycle_role") or "VERIFICATION"
+    return {
+        "lifecycle_role": role,
+        "on_failure": r.get("on_failure") or lc.DEFAULT_ON_FAILURE[role],
+        "discloses_policy_information": bool(r.get("discloses_policy_information")),
+        "deliver_on_termination": bool(r.get("deliver_on_termination")),
+    }
+
+
 def _revision_content(r: dict[str, Any]) -> dict[str, Any]:
     """Comparable content of a revision row selected with ``REV_SQL``."""
-    out = {f: r[f] for f in REVISION_FIELDS if f not in ("intent", "category")}
+    out = {f: r[f] for f in REVISION_FIELDS if f not in ("intent", "category", *LIFECYCLE_FIELDS)}
     out["intent"], out["category"] = r["rev_intent"], r["rev_category"]
-    return out
+    return out | lifecycle_of(r)
 
 
 def add_question(
@@ -1306,7 +1376,8 @@ def build_manifest(db: Session, version: dict[str, Any]) -> dict[str, Any]:
     qrows = _all(
         db,
         "SELECT mq.script_module_id, mq.position, mq.branch_condition, i.id AS item_id, i.question_code, "
-        "coalesce(d.intent, i.intent) AS intent, coalesce(d.category, i.category) AS category, qr.* "
+        "coalesce(d.intent, i.intent) AS intent, coalesce(d.category, i.category) AS category, d.lifecycle_role, "
+        "d.on_failure, d.discloses_policy_information, d.deliver_on_termination, qr.* "
         "FROM module_question mq JOIN question_revision qr ON qr.id = mq.question_revision_id "
         "JOIN question_bank_item i ON i.id = qr.question_bank_item_id LEFT JOIN question_revision_detail d "
         "ON d.question_revision_id = qr.id WHERE mq.script_module_id = ANY(:m) ORDER BY mq.position",
@@ -1341,6 +1412,7 @@ def build_manifest(db: Session, version: dict[str, Any]) -> dict[str, Any]:
                     "evidence_required": q["evidence_required"],
                     "escalation_rule_ref": q["escalation_rule_ref"],
                     "max_reprompts": q["max_reprompts"],
+                    **lifecycle_of(q),
                     "branch_condition": q["branch_condition"],
                     "content_approval_status": q["content_approval_status"],
                     "controls": controls.get(str(q["item_id"]), []),
@@ -1421,6 +1493,7 @@ def validate(db: Session, version: dict[str, Any]) -> list[dict[str, Any]]:
                         **q,
                         "enum_options": (q["answer_schema"] or {}).get("enum"),
                         "expected_boolean": (q["expected_value"] or {}).get("value"),
+                        "evaluation": q["expected_value"],
                     }
                 )
             except AuthoringError as exc:
@@ -1435,9 +1508,13 @@ def validate(db: Session, version: dict[str, Any]) -> list[dict[str, Any]]:
                     "asset, which cannot be attached yet (SCR-019)",
                     **loc,
                 )
-            if q["mandatory"] and not q["controls"]:
+            if q["mandatory"] and not q["controls"] and needs_control(q):
                 add("WARNING", "NO_CONTROL", f"{q['question_code']} is mandatory but linked to no control", **loc)
-            if q["mandatory"] and q["expected_answer_policy"] == "COLLECT_ONLY":
+            if (
+                q["mandatory"]
+                and q["expected_answer_policy"] == "COLLECT_ONLY"
+                and lifecycle_of(q)["lifecycle_role"] == "VERIFICATION"
+            ):
                 add(
                     "WARNING",
                     "MANDATORY_COLLECT_ONLY",
@@ -1446,7 +1523,86 @@ def validate(db: Session, version: dict[str, Any]) -> list[dict[str, Any]]:
                 )
     if m["sections"] and not mandatory:
         add("WARNING", "NO_MANDATORY", "The script has no mandatory question")
+    issues += lifecycle_issues(m)
     return issues
+
+
+def needs_control(q: dict[str, Any]) -> bool:
+    """Lifecycle statements and gates are not compliance controls; verification items and disclosures are."""
+    return (q.get("lifecycle_role") or "VERIFICATION") in ("VERIFICATION", "DISCLOSURE")
+
+
+def lifecycle_issues(m: dict[str, Any]) -> list[dict[str, Any]]:
+    """S2-D.1 lifecycle validation (SUR-009): roles in their stage, policy information only after an identity gate,
+    expected gates present, and the fixed stage order explained."""
+    out: list[dict[str, Any]] = []
+
+    def add(sev: str, code: str, msg: str, **loc: Any) -> None:
+        out.append({"severity": sev, "code": code, "message": msg, **loc})
+
+    roles: set[str] = set()
+    lifecycle = False
+    discloses: list[str] = []
+    last = -1
+    for sec in m["sections"]:
+        stage = lc.KIND_STAGE.get(sec["module_kind"], "VERIFICATION")
+        lifecycle |= sec["module_kind"] in lc.LIFECYCLE_KINDS
+        if lc.STAGE_ORDER[stage] < last:
+            add(
+                "WARNING",
+                "STAGE_ORDER",
+                f"Section {sec['module_code']} ({stage.lower()}) is placed after a later stage; "
+                "the conversation always runs opening → identity → disclosure → consent → verification → closing",
+                module_code=sec["module_code"],
+            )
+        last = max(last, lc.STAGE_ORDER[stage])
+        for q in sec["questions"]:
+            life = lifecycle_of(q)
+            role = life["lifecycle_role"]
+            roles.add(role)
+            loc = {"module_code": sec["module_code"], "question_code": q["question_code"]}
+            if lc.ROLE_STAGE[role] != stage:
+                add(
+                    "ERROR",
+                    "ROLE_STAGE_MISMATCH",
+                    f"{q['question_code']} is a {role.replace('_', ' ').lower()} but "
+                    f"section {sec['module_code']} is a {stage.lower()} section",
+                    **loc,
+                )
+            if life["discloses_policy_information"]:
+                discloses.append(q["question_code"])
+            if role == "DISCLOSURE" and q["delivery_mode"] == "CONVERSATIONAL":
+                add(
+                    "WARNING",
+                    "EXACT_WORDING_EXPECTED",
+                    f"{q['question_code']}: disclosures are expected to use "
+                    "controlled or exact wording (synthetic assumption)",
+                    **loc,
+                )
+    if discloses and "IDENTITY_CHECK" not in roles:
+        add(
+            "ERROR",
+            "IDENTITY_GATE_REQUIRED",
+            f"{', '.join(discloses)} disclose policy information, so the script "
+            "needs an identity check: policy information is never disclosed before identity is confirmed",
+        )
+    if lifecycle or roles - {"VERIFICATION"}:
+        for role, text in (
+            ("OPENING_STATEMENT", "an opening statement"),
+            ("IDENTITY_CHECK", "an identity check"),
+            ("CONSENT_TO_PROCEED", "a consent-to-proceed question"),
+            ("CLOSING_STATEMENT", "a closing statement"),
+        ):
+            if role not in roles:
+                add("WARNING", "LIFECYCLE_INCOMPLETE", f"The conversation lifecycle has no {text}")
+    elif m["sections"]:
+        add(
+            "WARNING",
+            "NO_LIFECYCLE",
+            "No conversation lifecycle is configured (opening, identity, consent, closing); "
+            "simulations report the identity gate as not configured",
+        )
+    return out
 
 
 def record_validation(
@@ -1489,6 +1645,7 @@ DIFF_FIELDS = (
     "escalation_rule_ref",
     "max_reprompts",
     "branch_condition",
+    *LIFECYCLE_FIELDS,
 )
 
 
@@ -1660,7 +1817,7 @@ def unmapped_mandatory(content: dict[str, Any]) -> list[str]:
         q["question_code"]
         for sec in content.get("sections", [])
         for q in sec["questions"]
-        if q["mandatory"] and not q.get("controls")
+        if q["mandatory"] and not q.get("controls") and needs_control(q)
     ]
 
 

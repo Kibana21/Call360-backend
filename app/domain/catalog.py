@@ -63,6 +63,17 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
         "assignment_rule_publication",
     ),
     "0018_script_assignment_engine": ("script_assignment_attempt",),  # S2-C assignment evidence (SCR-004/011)
+    "0019_script_simulation": ("script_simulation_run", "script_simulation_event"),  # S2-D text simulation (SUR-008)
+    "0020_conversation_lifecycle": (),  # S2-D.1: widened kinds, lifecycle columns on question_revision_detail
+    "0021_simulation_workbench": (  # S2-E workbench: scenarios, snapshots, automated results (SUR-010)
+        "simulation_scenario",
+        "simulation_scenario_revision",
+        "simulation_content_snapshot",
+        "simulation_batch",
+        "simulation_result",
+    ),
+    # S3-A deterministic answer evaluation of simulation runs (COMP-003/006); widened evaluation methods
+    "0022_answer_evaluation": ("simulation_answer_evaluation",),
 }
 DEFERRED_TABLES = frozenset({"risk_override", "review_decision"})  # media_asset: S1-C; transcript_segment: S1-D
 

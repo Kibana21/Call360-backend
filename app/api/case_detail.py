@@ -1096,7 +1096,8 @@ def script_version_detail(
             text(
                 "SELECT mq.id AS module_question_id, mq.position, mq.branch_condition, qbi.id AS item_id, "
                 "qbi.id AS question_bank_item_id, qbi.question_code, coalesce(d.intent, qbi.intent) AS intent, "
-                "coalesce(d.category, qbi.category) AS category, qr.* "
+                "coalesce(d.category, qbi.category) AS category, d.lifecycle_role, d.on_failure, "
+                "d.discloses_policy_information, d.deliver_on_termination, qr.* "
                 "FROM module_question mq JOIN question_revision qr ON qr.id = mq.question_revision_id "
                 "JOIN question_bank_item qbi ON qbi.id = qr.question_bank_item_id "
                 "LEFT JOIN question_revision_detail d ON d.question_revision_id = qr.id "
@@ -1104,11 +1105,17 @@ def script_version_detail(
             ),
             {"m": sec["module_id"]},
         ).mappings():
+            life = script_authoring.lifecycle_of(dict(q))
             qs.append(
                 ScriptQuestionOut(
+                    **life,
                     wording=q["customer_wording"],
                     controls=frozen.get(str(q["id"]), []) if frozen is not None else controls.get(q["item_id"], []),
-                    **{k: q[k] for k in ScriptQuestionOut.model_fields if k not in {"wording", "controls"}},
+                    **{
+                        k: q[k]
+                        for k in ScriptQuestionOut.model_fields
+                        if k not in {"wording", "controls", *script_authoring.LIFECYCLE_FIELDS}
+                    },
                 )
             )
         sections.append(
@@ -1162,5 +1169,10 @@ def script_version_detail(
         makers=makers,
         people=people,
         controls_source="MANIFEST" if frozen is not None else ("DRAFT" if own_links else "LIVE"),
-        unmapped_mandatory=[q.question_code for s in sections for q in s.questions if q.mandatory and not q.controls],
+        unmapped_mandatory=[
+            q.question_code
+            for s in sections
+            for q in s.questions
+            if q.mandatory and not q.controls and q.lifecycle_role in ("VERIFICATION", "DISCLOSURE")
+        ],
     )

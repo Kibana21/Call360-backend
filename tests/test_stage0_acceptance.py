@@ -67,7 +67,18 @@ def admin_client(client: TestClient, admin: Account) -> TestClient:
 
 def test_no_malaysian_data_or_secrets_in_any_list_search_or_facet(admin_client: TestClient, conn: Connection) -> None:
     sg_case = conn.execute(text(f"SELECT id FROM {SCHEMA}.callback_case WHERE market_code = 'SG' LIMIT 1")).scalar_one()
-    params_for = {**REQUIRED_PARAMS, "/api/v1/voice/sessions": {"case_id": str(sg_case)}}
+    sg_assigned = conn.execute(
+        text(
+            f"SELECT c.id FROM {SCHEMA}.callback_case c JOIN {SCHEMA}.script_assignment a ON a.callback_case_id = c.id "
+            "WHERE c.market_code = 'SG' LIMIT 1"
+        )
+    ).scalar_one()
+    params_for = {
+        **REQUIRED_PARAMS,
+        "/api/v1/voice/sessions": {"case_id": str(sg_case)},
+        "/api/v1/script-simulations/plan": {"case_id": str(sg_assigned)},  # S2-D: a case with a pinned script
+        "/api/v1/simulation-workbench/case-facts": {"case_id": str(sg_case)},  # S2-E: facts of a synthetic case
+    }
     lists = [p for p in _get_routes() if "{" not in p and p.startswith("/api/v1/")]
     assert len(lists) >= 30
     for path in lists:

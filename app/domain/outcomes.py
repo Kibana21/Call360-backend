@@ -44,7 +44,13 @@ class Outcome:
 def _satisfied(policy: str, state: str | None, rule_result: str | None) -> bool:
     if state is None or state in TERMINAL_UNANSWERED or state == "UNCLEAR":
         return False
-    if policy in {"EXACT_BOOLEAN", "NUMERIC_MATCH_POLICY_FACT"}:
+    if policy in {
+        "EXACT_BOOLEAN",
+        "NUMERIC_MATCH_POLICY_FACT",
+        "NUMERIC_COMPARE",
+        "ENUM_MATCH",
+        "ENUM_MATCH_POLICY_FACT",
+    }:  # S3-A methods: satisfied only by a deterministic MATCH
         return rule_result == "MATCH"
     if policy == "ACKNOWLEDGEMENT":
         return state == "YES" and rule_result == "MATCH"
