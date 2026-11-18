@@ -18,6 +18,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.domain import answer_evaluation as ae
+from app.domain import finding_engine as fe
+from app.domain import finding_rules as fr
 from app.domain import lifecycle as lc
 from app.domain import question_controller as qc
 from app.domain import scenario_runner as sr
@@ -29,6 +31,7 @@ EVALUATION_FACT_KEYS = ("premium_term_years", "premium_amount", "currency")
 FACT_KEYS = (*sa.CONDITION_FACTS, *EVALUATION_FACT_KEYS)
 CURRENCIES = ("SGD",)  # Singapore-only synthetic development
 EXPECTATION_KEYS = (
+    "findings",
     "evaluations",
     "basis",
     "outcome",
@@ -239,6 +242,28 @@ def normalise(body: Mapping[str, Any]) -> dict[str, Any]:
         if r not in sr.EVALUATION_RESULTS:
             problems.append(f"Expected evaluation of {c}: {r!r} is not an evaluation result")
     exp["evaluations"] = evals
+    if "findings" in exp:
+        fl = exp["findings"]
+        if not isinstance(fl, list) or len(fl) > 100:
+            problems.append("Expected findings must be a list (at most 100); an empty list expects none")
+        else:
+            clean_f = []
+            for i, f in enumerate(fl, start=1):
+                f = dict(f or {})
+                if not f.get("question"):
+                    problems.append(f"Expected finding {i}: choose the question")
+                if f.get("category") not in fe.CATEGORIES:
+                    problems.append(f"Expected finding {i}: category must be one of {', '.join(fe.CATEGORIES)}")
+                if f.get("severity") and f["severity"] not in fe.SEVERITIES:
+                    problems.append(f"Expected finding {i}: severity must be one of {', '.join(fe.SEVERITIES)}")
+                clean_f.append(
+                    {
+                        "question": f.get("question"),
+                        "category": f.get("category"),
+                        "severity": f.get("severity") or None,
+                    }
+                )
+            exp["findings"] = clean_f
     if exp.get("basis") and exp["basis"] not in sr.EXPECTATION_BASES:
         problems.append(f"Expectation basis {exp['basis']!r} is not known")
     for k in ("applicable_questions", "sequence"):
@@ -487,7 +512,14 @@ def _stale(db: Session, rev: Mapping[str, Any], v: Mapping[str, Any], sha: str) 
     return out
 
 
-def execute_one(db: Session, rev: Mapping[str, Any], v: dict[str, Any], *, persist: bool) -> dict[str, Any]:
+def execute_one(
+    db: Session,
+    rev: Mapping[str, Any],
+    v: dict[str, Any],
+    *,
+    persist: bool,
+    rules: fe.RuleSet | None = None,
+) -> dict[str, Any]:
     """Run one scenario revision against one version. ``persist`` snapshots the content (for a recorded result)."""
     if v["status"] == "ABANDONED":
         return {
@@ -527,8 +559,25 @@ def execute_one(db: Session, rev: Mapping[str, Any], v: dict[str, Any], *, persi
     def evaluator(ctrl: qc.Controller) -> list[dict[str, Any]]:
         return ae.evaluate(c, ctrl, source)
 
+    def finder(evaluations: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if rules is None:
+            return None
+        from app.domain import simulation_findings as sf
+
+        ctx = {
+            "execution_ref": f"scenario revision {rev.get('id') or 'unsaved'} on {sha[:12]}",
+            "case_ref": None,
+            "script_label": label(v),
+            "script_version_id": str(v["id"]),
+            "content_sha256": sha,
+            "evaluation_ref": None,
+            "evaluation_engine": ae.ENGINE,
+            "fact_source": source.as_dict(),
+        }
+        return sf.scenario_findings(evaluations, c, rules, ctx)
+
     try:
-        ex = sr.execute(plan, rev["steps"] or [], rev["expectations"] or {}, rev["default_response"], evaluator)
+        ex = sr.execute(plan, rev["steps"] or [], rev["expectations"] or {}, rev["default_response"], evaluator, finder)
     except sr.ScenarioInvalid as exc:
         return base | {
             "status": "INVALID",
@@ -563,6 +612,7 @@ def run(
     scenario_ids: Sequence[uuid.UUID],
     version_id: uuid.UUID | None,
     compare_with: uuid.UUID | None,
+    finding_rule_set_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     if not scenario_ids or len(scenario_ids) > MAX_BATCH:
         raise WorkbenchError(422, "INVALID_BATCH", f"Choose 1–{MAX_BATCH} scenarios")
@@ -580,12 +630,13 @@ def run(
         if va and s["script_family_id"] != va["script_family_id"]:
             raise WorkbenchError(422, "WRONG_FAMILY", f"{s['scenario_ref']} tests another script family")
         rows.append((s, revision_row(db, sid)))
+    rules = rule_set_for(db, rows[0][0]["market_code"], markets, finding_rule_set_id)
     batch_id = uuid.uuid4()
     results = []
     for s, rev in rows:
         targets = [("A", va or version(db, rev["script_version_id"], markets))] + ([("B", vb)] if vb else [])
         for side, v in targets:
-            r = execute_one(db, rev, v, persist=True)
+            r = execute_one(db, rev, v, persist=True, rules=rules)
             results.append((s, rev, side, v, r))
     totals: dict[str, Any] = {}
     for _, _, side, _, r in results:
@@ -738,13 +789,31 @@ def batches(db: Session, markets: Sequence[str], scenario_id: uuid.UUID | None =
     )
 
 
-def preview(db: Session, markets: Sequence[str], body: Mapping[str, Any]) -> dict[str, Any]:
+def rule_set_for(db: Session, market: str, markets: Sequence[str], vid: uuid.UUID | None) -> fe.RuleSet | None:
+    """The finding rule set used for scenario findings: the chosen version (drafts allowed, labelled) or the
+    published one; ``None`` when nothing is published (findings are then not generated, and say so)."""
+    if vid is not None:
+        try:
+            v = fr.version(db, vid, markets)
+        except fr.RuleSetError as exc:
+            raise WorkbenchError(404, "NOT_FOUND", exc.message) from exc
+        if v["status"] == "ABANDONED":
+            raise WorkbenchError(409, "RULE_SET_ABANDONED", "That finding rule set was abandoned")
+        return fr.rule_set(v)
+    p = fr.published(db, market)
+    return fr.rule_set(p) if p else None
+
+
+def preview(
+    db: Session, markets: Sequence[str], body: Mapping[str, Any], finding_rule_set_id: uuid.UUID | None = None
+) -> dict[str, Any]:
     """Dry run of unsaved scenario content (nothing is written)."""
     c = normalise({**body, "name": body.get("name") or "Unsaved scenario"})
     v = version(db, uuid.UUID(str(c["script_version_id"])), markets)
     sha, _ = content(db, v)
     rev = c | {"id": None, "script_content_sha256": sha}
-    return execute_one(db, rev, v, persist=False) | {"version": v}
+    rules = rule_set_for(db, v["market_code"], markets, finding_rule_set_id)
+    return execute_one(db, rev, v, persist=False, rules=rules) | {"version": v}
 
 
 def plan_for(

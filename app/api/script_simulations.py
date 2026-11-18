@@ -34,6 +34,10 @@ from app.api.schemas import (
     SimEvaluationSummary,
     SimEventIn,
     SimEventOut,
+    SimFindingSetList,
+    SimFindingSetOut,
+    SimFindingSetSummary,
+    SimFindingsIn,
     SimPlanOut,
     SimPlanQuestion,
     SimPlanSection,
@@ -47,10 +51,13 @@ from app.api.schemas import (
 from app.api.script_authoring import _guard
 from app.audit.chain import write_audit
 from app.core.errors import AppError
+from app.domain import finding_engine as fe
+from app.domain import finding_rules as fr
 from app.domain import lifecycle as lc
 from app.domain import question_controller as qc
 from app.domain import script_simulation as ss
 from app.domain import simulation_evaluation as se
+from app.domain import simulation_findings as sf
 from app.security.authz import AuthContext, get_db, request_meta, require
 
 router = APIRouter(prefix="/api/v1", tags=["script-simulation"])
@@ -507,3 +514,124 @@ def simulation_evaluation_get(
     if rec["run_id"] != run_id:
         raise AppError(404, "NOT_FOUND", "Evaluation not found or not available to you")
     return _eval_out(rec)
+
+
+# ---- S3-B: simulated finding generation from an evaluation -------------------------------------------------------
+def _set_out(rec: dict[str, Any], created: bool = False) -> SimFindingSetOut:
+    return SimFindingSetOut(
+        **{k: rec[k] for k in SimFindingSetOut.model_fields if k in rec and k not in ("created", "note")},
+        created_by_name=rec.get("display_name"),
+        created=created,
+        note=fe.NOTE + " Simulation only: these findings are not operational findings and never reach case state, "
+        "review queues or KPIs.",
+    )
+
+
+@router.post(
+    "/script-simulations/{run_id}/evaluations/{evaluation_id}/findings",
+    response_model=SimFindingSetOut,
+    operation_id="simulation_findings_generate",
+    responses=_ERR,
+)
+@csrf_protected
+def simulation_findings_generate(
+    run_id: uuid.UUID,
+    evaluation_id: uuid.UUID,
+    body: SimFindingsIn,
+    request: Request,
+    auth: AuthContext = Depends(require("script.simulate")),
+    db: Session = Depends(get_db),
+) -> SimFindingSetOut:
+    """Generate findings from a recorded evaluation with the published finding rule set (or a chosen version, for
+    testing). Identical inputs return the existing finding set (``created`` false); nothing is duplicated."""
+    _guard(request, auth)
+    try:
+        rec, created = sf.generate(db, run_id, evaluation_id, _markets(auth), _who(auth), body.rule_set_version_id)
+    except (ss.SimulationError, fr.RuleSetError) as exc:
+        db.rollback()
+        raise AppError(exc.status, exc.code, exc.message) from exc
+    if created:
+        write_audit(
+            db,
+            action="SIMULATION.FINDINGS_GENERATED",
+            outcome="SUCCEEDED",
+            actor=auth.actor,
+            meta=request_meta(request),
+            entity_type="callback_case",
+            entity_id=db.execute(
+                text(
+                    "SELECT c.case_ref FROM script_simulation_run r JOIN callback_case c ON c.id = r.callback_case_id "
+                    "WHERE r.id = :r"
+                ),
+                {"r": run_id},
+            ).scalar_one(),
+            after={
+                "run": str(run_id),
+                "evaluation": rec["evaluation_ref"],
+                "finding_set": rec["finding_set_ref"],
+                "rule_set": rec["rule_set_label"],
+                "summary": rec["summary"],
+            },
+        )
+    db.commit()
+    return _set_out(rec, created)
+
+
+@router.get(
+    "/script-simulations/{run_id}/evaluations/{evaluation_id}/findings",
+    response_model=SimFindingSetList,
+    operation_id="simulation_finding_sets",
+    responses=_ERR,
+)
+def simulation_finding_sets(
+    run_id: uuid.UUID,
+    evaluation_id: uuid.UUID,
+    auth: AuthContext = Depends(require("case.read")),
+    db: Session = Depends(get_db),
+) -> SimFindingSetList:
+    _read(auth)
+    try:
+        ev = se.get(db, evaluation_id, _markets(auth))
+    except ss.SimulationError as exc:
+        raise _err(exc) from exc
+    if ev["run_id"] != run_id:
+        raise AppError(404, "NOT_FOUND", "Evaluation not found or not available to you")
+    return SimFindingSetList(
+        items=[
+            SimFindingSetSummary(
+                id=r["id"],
+                finding_set_ref=r["finding_set_ref"],
+                rule_set_label=fr.label(
+                    {"market_code": r["market_code"], "version_no": r["version_no"], "status": r["rule_set_status"]}
+                ),
+                rule_set_status=r["rule_set_status"],
+                summary=r["summary"],
+                created_at=r["created_at"],
+                created_by_name=r["display_name"],
+            )
+            for r in sf.for_evaluation(db, evaluation_id, _markets(auth))
+        ]
+    )
+
+
+@router.get(
+    "/script-simulations/{run_id}/finding-sets/{finding_set_id}",
+    response_model=SimFindingSetOut,
+    operation_id="simulation_finding_set_get",
+    responses=_ERR,
+)
+def simulation_finding_set_get(
+    run_id: uuid.UUID,
+    finding_set_id: uuid.UUID,
+    auth: AuthContext = Depends(require("case.read")),
+    db: Session = Depends(get_db),
+) -> SimFindingSetOut:
+    """One finding set with its evidence and a replay check (re-derived from the stored evaluation and rule set)."""
+    _read(auth)
+    try:
+        rec = sf.get(db, finding_set_id, _markets(auth))
+    except (ss.SimulationError, fr.RuleSetError) as exc:
+        raise AppError(exc.status, exc.code, exc.message) from exc
+    if rec["run_id"] != run_id:
+        raise AppError(404, "NOT_FOUND", "Finding set not found or not available to you")
+    return _set_out(rec)

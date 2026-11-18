@@ -47,6 +47,7 @@ from app.api.schemas import (
 from app.api.script_authoring import _guard
 from app.audit.chain import write_audit
 from app.core.errors import AppError
+from app.domain import finding_engine as fe
 from app.domain import lifecycle as lc
 from app.domain import scenario_runner as sr
 from app.domain import script_authoring as sa
@@ -137,6 +138,8 @@ def workbench_options(auth: AuthContext = Depends(require("script.read"))) -> Wo
         evaluation_results=list(sr.EVALUATION_RESULTS),
         evaluation_facts=list(wb.EVALUATION_FACT_KEYS),
         expectation_bases=list(sr.EXPECTATION_BASES),
+        finding_categories=list(fe.CATEGORIES),
+        finding_severities=list(fe.SEVERITIES),
     )
 
 
@@ -328,7 +331,9 @@ def scenario_preview(
 ) -> ScenarioPreviewOut:
     """Dry run of unsaved scenario content against the controller (nothing is written)."""
     try:
-        r = wb.preview(db, _markets(auth), body.model_dump(mode="json"))
+        data = body.model_dump(mode="json")
+        rs = data.pop("finding_rule_set_version_id", None)
+        r = wb.preview(db, _markets(auth), data, uuid.UUID(rs) if rs else None)
     except wb.WorkbenchError as exc:
         db.rollback()
         raise _err(exc) from exc
@@ -522,7 +527,13 @@ def scenario_run(
     _guard(request, auth)
     try:
         bid = wb.run(
-            db, _markets(auth), _who(auth), body.scenario_ids, body.script_version_id, body.compare_with_version_id
+            db,
+            _markets(auth),
+            _who(auth),
+            body.scenario_ids,
+            body.script_version_id,
+            body.compare_with_version_id,
+            body.finding_rule_set_version_id,
         )
     except wb.WorkbenchError as exc:
         db.rollback()

@@ -29,7 +29,7 @@ def _one(db: Session, sql: str, **p: Any) -> dict[str, Any] | None:
     return dict(r) if r else None
 
 
-def _content(db: Session, run: Mapping[str, Any]) -> tuple[str, dict[str, Any], str]:
+def content_for(db: Session, run: Mapping[str, Any]) -> tuple[str, dict[str, Any], str]:
     """(content checksum, content, source). A version test uses its snapshot, never the draft's live rows."""
     if run.get("content_sha256"):
         r = _one(db, "SELECT content FROM simulation_content_snapshot WHERE sha256 = :s", s=run["content_sha256"])
@@ -57,7 +57,7 @@ def _facts(db: Session, run: Mapping[str, Any]) -> tuple[ae.FactSource, dict[str
 def evaluate_controller(
     db: Session, run: Mapping[str, Any], ctrl: qc.Controller
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    sha, content, src = _content(db, run)
+    sha, content, src = content_for(db, run)
     facts, snap = _facts(db, run)
     results = ae.evaluate(content, ctrl, facts)
     return results, {"content_sha256": sha, "content_source": src, "fact_source": facts.as_dict(), "snapshot": snap}
@@ -159,7 +159,7 @@ def replay(db: Session, rec: Mapping[str, Any]) -> dict[str, Any]:
     if content is not None:
         c = dict(content["content"])
     else:
-        sha, c, _ = _content(db, run | {"content_sha256": None})
+        sha, c, _ = content_for(db, run | {"content_sha256": None})
         if sha != rec["content_sha256"]:
             return {"matches": False, "detail": "The published content no longer matches the recorded checksum"}
     facts, snap = _facts(db, run)

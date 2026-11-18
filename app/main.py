@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import text
 
 from app.api import (
     admin,
@@ -18,10 +19,12 @@ from app.api import (
     case_detail,
     cases,
     dashboard,
+    finding_rules,
     health,
     intake,
     me,
     policies,
+    review_workbench,
     reviews,
     risk,
     script_assignments,
@@ -31,6 +34,7 @@ from app.api import (
     search,
     simulation_workbench,
     voice,
+    voice_lab,
 )
 from app.core.errors import install_error_handlers
 from app.core.middleware import SecurityMiddleware, install_log_redaction
@@ -41,7 +45,7 @@ from app.domain.protection import protection_for
 from app.security.cookies import cookie_names
 from app.security.rate_limit import SlidingWindowLimiter
 from app.security.tokens import TokenService
-from app.voice import transcript
+from app.voice import lab, transcript
 
 
 async def _voice_sweeper(app: FastAPI, every_s: float = 15.0) -> None:
@@ -51,8 +55,26 @@ async def _voice_sweeper(app: FastAPI, every_s: float = 15.0) -> None:
         await asyncio.sleep(every_s)
         try:
             await asyncio.to_thread(voice.run_sweep, app)
+            await asyncio.to_thread(_lab_sweep, app)
         except Exception:  # noqa: BLE001 — the sweeper must keep running; the next pass retries
             logging.getLogger("call360.voice").exception("voice session sweep failed")
+
+
+def _lab_sweep(app: FastAPI) -> None:
+    """S1-E.1: end Voice Lab sessions that were created but never connected (their reservation is released)."""
+    with app.state.session_factory() as db, db.begin():
+        if db.execute(text("SELECT to_regclass('lab_session')")).scalar() is not None:
+            lab.abandon_unconnected(db)  # only CREATED sessions: a connected one is LIVE
+            if db.execute(text("SELECT to_regclass('lab_speech_assessment')")).scalar() is not None:
+                # S1-E.2: the local retention policy (RECORDING_RETENTION_HOURS, 168 h) applies to lab audio and
+                # session transcripts; rows, checksums, metrics and evaluation history are kept.
+                lab.purge_expired(db, lab.store_for(app), app.state.settings.recording_retention_hours)
+
+
+def _lab_recover(app: FastAPI) -> None:
+    with app.state.session_factory() as db, db.begin():
+        if db.execute(text("SELECT to_regclass('lab_session')")).scalar() is not None:
+            lab.recover(db)
 
 
 async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
@@ -65,7 +87,7 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0022_answer_evaluation"
+MIGRATION_HEAD = "0026_gpt_live_provider"
 ROUTERS = (
     health.router,
     auth.router,
@@ -83,8 +105,11 @@ ROUTERS = (
     script_assignments.router,
     script_simulations.router,
     simulation_workbench.router,
+    finding_rules.router,
+    review_workbench.router,
     reviews.router,
     voice.router,
+    voice_lab.router,
     policies.router,
     risk.router,
     intake.router,
@@ -105,6 +130,7 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
             voice.run_sweep(app, startup=True)
             sweeper = asyncio.create_task(_voice_sweeper(app))
             transcript.recover(app)  # nothing is transcribing after a (re)start: expire leases
+            _lab_recover(app)  # S1-E.1: nothing is live in the Voice Lab after a (re)start
             worker = asyncio.create_task(_transcription_worker(app)) if settings.transcription_worker else None
         yield
         if with_database:

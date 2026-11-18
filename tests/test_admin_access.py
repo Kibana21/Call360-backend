@@ -131,7 +131,11 @@ def test_groups_roles_and_membership_changes(
     assert {"admin.groups.manage", "admin.sessions.manage"} <= {
         p["code"] for r in roles["items"] if r["code"] == "ADMIN" for p in r["permissions"]
     }
-    assert "review.decide" in {p["code"] for p in roles["reserved_permissions"]}
+    reserved = {p["code"] for p in roles["reserved_permissions"]}
+    assert "pii.unmasked" in reserved and "review.decide" not in reserved  # S3-C un-reserved review.decide
+    assert not {"review.decide", "review.approve"} & {  # never granted to ADMIN (no maker-checker bypass)
+        p["code"] for r in roles["items"] if r["code"] == "ADMIN" for p in r["permissions"]
+    }
 
     target = make_account(db, "LOCAL_USER_SG", prefix="member")
     login(other_client, target)
@@ -237,7 +241,7 @@ def test_system_health(admin_client: TestClient) -> None:
     checks = {c["code"]: c["status"] for c in body["checks"]}
     assert checks["DATABASE"] == checks["MIGRATIONS"] == checks["DATA_POLICY"] == checks["AUDIT_CHAIN"] == "OK"
     assert checks["MOCK_UPSTREAM"] == checks["VOICE"] == "NOT_AVAILABLE"
-    assert body["migration_head"] == body["expected_migration_head"] == "0022_answer_evaluation"
+    assert body["migration_head"] == body["expected_migration_head"] == "0026_gpt_live_provider"
     assert body["enabled_markets"] == ["SG"] and body["current_stage"] == "S0" and body["audit_chain_head"]
     sha = (Path(__file__).resolve().parents[1] / "contracts" / "generated" / "openapi.sha256").read_text().strip()
     assert body["openapi_sha256"] == sha

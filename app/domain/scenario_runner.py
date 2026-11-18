@@ -42,6 +42,7 @@ QUESTION_STATES = ("COMPLETED", "UNRESOLVED", "SKIPPED_BY_CONDITION", "PENDING")
 EVALUATION_RESULTS = ae.RESULTS
 EXPECTATION_BASES = ("INDEPENDENT", "GENERATED_BASELINE")
 Evaluator = Callable[[qc.Controller], list[dict[str, Any]]]
+Finder = Callable[[list[dict[str, Any]]], dict[str, Any] | None]
 TERMINATION_REASONS = (
     "IDENTITY_FAILED",
     "IDENTITY_INCONCLUSIVE",
@@ -108,6 +109,9 @@ def validate(plan: qc.Plan, steps: Sequence[Mapping[str, Any]], expectations: Ma
     for code in expectations.get("question_states") or {}:
         if code not in codes:
             problems.append(f"Expected state for {code}, which is not in this script version")
+    for f in expectations.get("findings") or []:
+        if f.get("question") not in codes:
+            problems.append(f"Expected finding for {f.get('question')}, which is not in this script version")
     for code in expectations.get("evaluations") or {}:
         if code not in codes:
             problems.append(f"Expected evaluation for {code}, which is not in this script version")
@@ -276,6 +280,68 @@ def compare(actual: Mapping[str, Any], exp: Mapping[str, Any]) -> list[dict[str,
                     f"{code} answer evaluation: expected {h(want_r)}, got {h(got_r)}"
                     + (f" — {explain[code]}" if explain.get(code) else ""),
                 )
+    if exp.get("findings") is not None:
+        out += _compare_findings(list(exp["findings"]), actual)
+    return out
+
+
+def _compare_findings(want: list[Mapping[str, Any]], actual: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Expected findings: (question, category[, severity]); an empty list expects no findings at all."""
+    if "findings_view" not in actual:
+        return [
+            {
+                "check": "findings",
+                "expected": want,
+                "actual": None,
+                "message": "Findings: expected findings were specified, but no finding rule set was available to "
+                "generate findings",
+            }
+        ]
+    got = list(actual["findings_view"])
+    used = [False] * len(got)
+    missing = []
+    for w in want:
+        hit = next(
+            (
+                i
+                for i, g in enumerate(got)
+                if not used[i]
+                and g["question"] == w.get("question")
+                and g["category"] == w.get("category")
+                and (not w.get("severity") or g["severity"] == w.get("severity"))
+            ),
+            None,
+        )
+        if hit is None:
+            missing.append(w)
+        else:
+            used[hit] = True
+    extra = [g for i, g in enumerate(got) if not used[i]]
+
+    def h(f: Mapping[str, Any]) -> str:
+        sev = f" ({f['severity']})" if f.get("severity") else ""
+        return f"{f.get('question')} {str(f.get('category', '')).replace('_', ' ').lower()}{sev}"
+
+    out = []
+    if missing:
+        out.append(
+            {
+                "check": "findings:missing",
+                "expected": missing,
+                "actual": got,
+                "message": "Expected finding(s) not generated: " + "; ".join(h(m) for m in missing),
+            }
+        )
+    if extra:
+        out.append(
+            {
+                "check": "findings:unexpected",
+                "expected": want,
+                "actual": extra,
+                "message": ("No findings were expected, but generated: " if not want else "Unexpected finding(s): ")
+                + "; ".join(h(x) for x in extra),
+            }
+        )
     return out
 
 
@@ -285,6 +351,7 @@ def execute(
     expectations: Mapping[str, Any],
     default_response: str = "AFFIRMATIVE",
     evaluator: Evaluator | None = None,
+    finder: Finder | None = None,
 ) -> Execution:
     """Run the scenario through a fresh controller and compare. Raises ``ScenarioInvalid`` when it cannot run."""
     problems = validate(plan, steps, expectations)
@@ -333,6 +400,13 @@ def execute(
         actual["evaluation_results"] = ae.result_map(evaluations)
         actual["evaluation_totals"] = ae.totals(evaluations)
         actual["evaluation_engine"] = ae.ENGINE
+        found = finder(evaluations) if finder is not None else None
+        if found is not None:
+            actual["findings"] = found["findings"]
+            actual["findings_view"] = found["expected_view"]
+            actual["findings_summary"] = found["summary"]
+            actual["findings_not_converted"] = found["not_converted"]
+            actual["finding_rule_set"] = found["rule_set"]
     events = [e.as_dict() for e in ctrl.events]
     if error is not None:
         return Execution("ERROR", actual, [], error, events, log)
@@ -490,6 +564,9 @@ def outcome_diff(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[dict[str, A
     for k in ("outcome", "termination_reason", "mandatory_complete", "sequence", "gates", "mandatory_unresolved"):
         if (a or {}).get(k) != (b or {}).get(k):
             out.append({"field": k, "a": (a or {}).get(k), "b": (b or {}).get(k)})
+    fa, fb = (a or {}).get("findings_view"), (b or {}).get("findings_view")
+    if fa != fb:
+        out.append({"field": "findings", "a": fa, "b": fb})
     ea, eb = (a or {}).get("evaluation_results") or {}, (b or {}).get("evaluation_results") or {}
     for code in list(dict.fromkeys([*ea, *eb])):
         if ea.get(code) != eb.get(code):

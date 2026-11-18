@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     transcript_no_speech_prob: float = 0.6
     transcript_max_compression: float = 2.4
     transcript_split_pause_s: float = 1.0
+    # S1-E.2 GPT-Live adapter (Voice Lab only). DISABLED by default: no connection is possible. LIVE needs the dedicated
+    # backend-only key VOICE_LAB_OPENAI_API_KEY (never sent to a browser, logged or returned) and is still gated by the
+    # Voice Lab paid switch, a single-use smoke-test authorisation and the PAID budget. The official URL is the only
+    # remote host allowed; a loopback URL is accepted only in APP_ENV=test (mocked protocol server).
+    voice_lab_gpt_live_mode: Literal["DISABLED", "LIVE"] = "DISABLED"
+    voice_lab_openai_api_key: SecretStr | None = None
+    voice_lab_gpt_live_url: str = "wss://api.openai.com/v1/live/sessions"
+    # The GPT_LIVE_MOCK provider: the same adapter against a local mocked protocol server (loopback only, no key, no
+    # money; synthetic metering at the verified GPT-Live rate). Unset: the provider is unavailable.
+    voice_lab_gpt_live_mock_url: str | None = None
+    voice_lab_close_timeout_s: float = 5.0
 
     access_token_ttl_seconds: int = 600
     refresh_idle_seconds: int = 1800
@@ -130,6 +141,9 @@ class Settings(BaseSettings):
             raise ValueError("transcript rejection thresholds are out of range")
         if not 1 <= self.transcription_threads <= 16:
             raise ValueError("TRANSCRIPTION_THREADS must be between 1 and 16")
+        from app.voice.gpt_live import check_urls  # local import: the adapter module imports settings types only
+
+        check_urls(self)
 
     @property
     def database_url_secret(self) -> SecretStr | None:

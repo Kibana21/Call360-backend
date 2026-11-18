@@ -1,7 +1,8 @@
 """Case outcome categories and mandatory-control satisfaction (S0_KPI_DEFINITIONS §1, §1.1; D-17).
 
-Derived from persisted data only. In S0 a NARRATIVE_REVIEW control can never be satisfied (review decisions
-arrive in S3), so a case with an applicable mandatory narrative question cannot be VERIFIED_COMPLIANT.
+Derived from persisted data only. A NARRATIVE_REVIEW control is satisfied only by a human assessment: a SATISFACTORY
+S3-C answer assessment (latest one wins) or findings on that answer that were all dismissed or resolved; seeded S0
+data has none, so its narrative controls stay unsatisfied as before.
 NOT_VERIFIED and CANCELLED describe the callback verification, never the insurance sale.
 """
 
@@ -41,7 +42,7 @@ class Outcome:
     open_findings: int
 
 
-def _satisfied(policy: str, state: str | None, rule_result: str | None) -> bool:
+def _satisfied(policy: str, state: str | None, rule_result: str | None, assessed: bool = False) -> bool:
     if state is None or state in TERMINAL_UNANSWERED or state == "UNCLEAR":
         return False
     if policy in {
@@ -56,7 +57,7 @@ def _satisfied(policy: str, state: str | None, rule_result: str | None) -> bool:
         return state == "YES" and rule_result == "MATCH"
     if policy == "COLLECT_ONLY":
         return True
-    return False  # NARRATIVE_REVIEW: needs a human review disposition (S3)
+    return assessed  # NARRATIVE_REVIEW: satisfied only by a human assessment (S3-C review decision)
 
 
 def controls_satisfied(conn: Connection, schema: str, run_id: uuid.UUID | None) -> bool:
@@ -74,7 +75,7 @@ def controls_satisfied(conn: Connection, schema: str, run_id: uuid.UUID | None) 
         {"r": run_id},
     ).one()
     evidence = {
-        row.question_revision_id: (row.answer_state, row.result)
+        row.question_revision_id: (row.answer_state, row.result, bool(row.assessed))
         for row in conn.execute(
             text(
                 "SELECT qe.question_revision_id, "  # noqa: S608
@@ -82,15 +83,23 @@ def controls_satisfied(conn: Connection, schema: str, run_id: uuid.UUID | None) 
                 f"  AND NOT EXISTS (SELECT 1 FROM {schema}.answer_observation x WHERE x.supersedes_id = ao.id) "
                 "  ORDER BY ao.created_at DESC LIMIT 1) AS answer_state, "
                 f"(SELECT re.result FROM {schema}.rule_evaluation re WHERE re.question_execution_id = qe.id "
-                "  ORDER BY re.evaluated_at DESC LIMIT 1) AS result "
+                "  ORDER BY re.evaluated_at DESC LIMIT 1) AS result, "
+                f"(EXISTS (SELECT 1 FROM {schema}.review_decision d WHERE d.question_execution_id = qe.id "
+                "  AND d.action = 'ASSESS_ANSWER' AND d.reason_code = 'SATISFACTORY' AND NOT EXISTS (SELECT 1 FROM "
+                f"  {schema}.review_decision d2 WHERE d2.question_execution_id = qe.id AND d2.action = 'ASSESS_ANSWER' "
+                "  AND d2.decided_at > d.decided_at)) OR (EXISTS (SELECT 1 FROM "
+                f"  {schema}.finding f WHERE f.question_execution_id = qe.id) AND NOT EXISTS (SELECT 1 FROM "
+                f"  {schema}.finding f WHERE f.question_execution_id = qe.id "
+                "  AND f.status NOT IN ('DISMISSED', 'CLOSED'))))"
+                " AS assessed "
                 f"FROM {schema}.question_execution qe WHERE qe.survey_run_id = :r"
             ),
             {"r": run_id},
         )
     }
     for q in applicable_mandatory(run.manifest, run.facts, run.band_code):
-        state, result = evidence.get(uuid.UUID(q["question_revision_id"]), (None, None))
-        if not _satisfied(q["expected_answer_policy"], state, result):
+        state, result, assessed = evidence.get(uuid.UUID(q["question_revision_id"]), (None, None, False))
+        if not _satisfied(q["expected_answer_policy"], state, result, assessed):
             return False
     return True
 

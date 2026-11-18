@@ -3126,6 +3126,12 @@ class ScenarioStep(BaseModel):
     note: str | None = Field(default=None, max_length=300)
 
 
+class ExpectedFinding(BaseModel):
+    question: str = Field(max_length=60)
+    category: str = Field(max_length=32)
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] | None = None
+
+
 class ScenarioExpectations(BaseModel):
     outcome: str | None = Field(default=None, max_length=20)
     termination_reason: str | None = Field(default=None, max_length=60)
@@ -3137,6 +3143,8 @@ class ScenarioExpectations(BaseModel):
     # S3-A: per-question expected answer-evaluation results, and how the expectations were obtained
     evaluations: dict[str, str] = Field(default_factory=dict)
     basis: Literal["INDEPENDENT", "GENERATED_BASELINE"] | None = None
+    # S3-B: expected findings (question, category, optional severity); [] expects no findings, None = not checked
+    findings: list[ExpectedFinding] | None = None
 
 
 class ScenarioContent(BaseModel):
@@ -3161,6 +3169,7 @@ class ScenarioPreviewIn(BaseModel):
     steps: list[ScenarioStep] = Field(default_factory=list, max_length=100)
     expectations: ScenarioExpectations = Field(default_factory=ScenarioExpectations)
     default_response: Literal["AFFIRMATIVE", "STRICT"] = "AFFIRMATIVE"
+    finding_rule_set_version_id: uuid.UUID | None = None  # S3-B dry run: rule set to test (default: published)
 
 
 class ScenarioReviseIn(BaseModel):
@@ -3233,6 +3242,7 @@ class ScenarioRunIn(BaseModel):
     scenario_ids: list[uuid.UUID] = Field(min_length=1, max_length=50)
     script_version_id: uuid.UUID | None = None  # run against this version instead of each scenario's own
     compare_with_version_id: uuid.UUID | None = None  # version B of a comparison
+    finding_rule_set_version_id: uuid.UUID | None = None  # S3-B: findings with this rule set (default: published)
 
 
 class SimResultOut(BaseModel):
@@ -3338,6 +3348,9 @@ class WorkbenchOptions(BaseModel):
     evaluation_results: list[str] = Field(default_factory=list)
     evaluation_facts: list[str] = Field(default_factory=list)
     expectation_bases: list[str] = Field(default_factory=list)
+    # S3-B
+    finding_categories: list[str] = Field(default_factory=list)
+    finding_severities: list[str] = Field(default_factory=list)
 
 
 class CaseFactsOut(BaseModel):
@@ -3406,4 +3419,322 @@ class SimEvaluationOut(SimEvaluationSummary):
     results: list[AnswerEvaluationItem]
     replay: EvaluationReplay
     created: bool = False
+    note: str
+
+
+# ---- S3-B: governed finding rules and simulated findings (COMP-008, REG-007) -------------------------------------
+class FindingRuleIn(BaseModel):
+    rule_code: str = Field(max_length=48)
+    scope: Literal["QUESTION", "CONTROL", "ANY_QUESTION"] = "QUESTION"
+    target: str | None = Field(default=None, max_length=60)
+    mandatory_only: bool = False
+    trigger: str = Field(max_length=32)
+    category: str = Field(max_length=32)
+    description: str = Field(max_length=300)
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    severity_justification: str = Field(max_length=300)
+    review_required: bool = True
+
+
+class FindingRuleOut(FindingRuleIn):
+    finding_class: str | None = None
+    text: str = ""
+
+
+class FindingRuleSetSummary(BaseModel):
+    id: uuid.UUID
+    market_code: str
+    version_no: int
+    label: str
+    status: str
+    rules_count: int
+    rules_sha256: str
+    change_summary: str | None
+    created_at: datetime
+    published_at: datetime | None
+    created_by_name: str | None
+
+
+class FindingRuleSetList(BaseModel):
+    items: list[FindingRuleSetSummary]
+    published_id: uuid.UUID | None
+    note: str
+
+
+class FindingRuleSetEvent(BaseModel):
+    action: str
+    reason: str | None
+    details: dict[str, Any]
+    occurred_at: datetime
+    actor_name: str | None
+
+
+class FindingRuleSetOut(FindingRuleSetSummary):
+    row_version: int
+    rules: list[FindingRuleOut]
+    content_approval_status: str
+    reviewed_by_name: str | None = None
+    review_reason: str | None = None
+    i_am_maker: bool
+    diff_vs_published: dict[str, Any] | None
+    warnings: list[str]
+    history: list[FindingRuleSetEvent]
+    note: str
+
+
+class FindingRuleSetCreateIn(BaseModel):
+    empty: bool = False
+
+
+class FindingRuleSetUpdateIn(BaseModel):
+    expected_row_version: int
+    rules: list[FindingRuleIn] = Field(max_length=200)
+    change_summary: str | None = Field(default=None, max_length=500)
+
+
+class FindingRuleSetSubmitIn(BaseModel):
+    expected_row_version: int
+    change_summary: str = Field(max_length=500)
+
+
+class FindingRuleSetReviewIn(BaseModel):
+    decision: Literal["APPROVE", "RETURN"]
+    reason: str = Field(max_length=500)
+
+
+class FindingRuleSetAbandonIn(BaseModel):
+    reason: str = Field(max_length=500)
+
+
+class FindingRuleOptions(BaseModel):
+    engine: str
+    triggers: list[str]
+    trigger_class: dict[str, str]
+    class_labels: dict[str, str]
+    categories: list[str]
+    trigger_categories: dict[str, list[str]]
+    severities: list[str]
+    scopes: list[str]
+    controls: list[PickCode]
+    questions: list[PickCode]
+    note: str
+
+
+class PickCode(BaseModel):
+    code: str
+    label: str
+
+
+class SimFindingsIn(BaseModel):
+    rule_set_version_id: uuid.UUID | None = None  # default: the published rule set
+
+
+class SimFindingSetSummary(BaseModel):
+    id: uuid.UUID
+    finding_set_ref: str
+    rule_set_label: str
+    rule_set_status: str
+    summary: dict[str, Any]
+    created_at: datetime
+    created_by_name: str | None
+
+
+class SimFindingSetList(BaseModel):
+    items: list[SimFindingSetSummary]
+
+
+class SimFindingSetOut(SimFindingSetSummary):
+    evaluation_id: uuid.UUID
+    evaluation_ref: str
+    rule_set_version_id: uuid.UUID
+    rule_set_current_status: str  # the rule set's status now (rule_set_status is its status at generation)
+    rule_set_sha256: str
+    engine_version: str
+    input_sha256: str
+    findings: list[dict[str, Any]]
+    not_converted: list[dict[str, Any]]
+    human_assessment: list[dict[str, Any]]
+    replay: EvaluationReplay
+    created: bool = False
+    note: str
+
+
+# ---- S3-C: human review and case resolution (REV-002/003/004, COMP-009) -----------------------------------------
+class ReadinessCheck(BaseModel):
+    code: str
+    label: str
+    ok: bool
+    detail: str
+
+
+class ReviewReadiness(BaseModel):
+    ready: bool
+    checks: list[ReadinessCheck]
+    run: dict[str, Any] | None
+
+
+class ReviewQuestion(BaseModel):
+    code: str
+    wording: str
+    revision: int
+    question_revision_id: str
+    mandatory: bool
+    role: str
+    stage: str
+    applicable: bool
+    skip_reason: str | None
+    method: str | None
+    rule_text: str | None
+    executed: bool
+    question_execution_id: str | None
+    delivery_status: str | None
+    answer_state: str | None
+    typed_value: Any = None
+    verbatim: str | None
+    extraction_engine: str | None
+    expected: Any = None
+    observed: Any = None
+    evaluation_result: str | None
+    rule_ref: str | None
+    controls: list[dict[str, Any]]
+    assessment: dict[str, Any] | None
+
+
+class ReviewFinding(BaseModel):
+    id: uuid.UUID
+    finding_ref: str
+    question_code: str | None
+    category: str
+    severity: str
+    material: bool
+    status: str
+    origin: str
+    record_origin: str
+    raised_at: datetime
+    row_version: int
+    finding_class: str
+    severity_justification: str
+    severity_source: str
+    rule: dict[str, Any] | None
+    controls: list[dict[str, Any]] | None
+    explanation: str | None
+    evidence_refs: dict[str, Any]
+    pending_approval_id: uuid.UUID | None
+    allowed_actions: list[str]
+
+
+class ReviewApprovalOut(BaseModel):
+    id: uuid.UUID
+    approval_ref: str
+    callback_case_id: uuid.UUID
+    case_ref: str
+    case_state: str
+    finding_id: uuid.UUID | None
+    finding_ref: str | None
+    severity: str | None
+    kind: str
+    proposed_action: str
+    proposed_to_status: str
+    closure_reason: str | None
+    reason: str
+    proposed_by: str
+    proposed_by_name: str | None
+    proposed_at: datetime
+    status: str
+    decided_at: datetime | None
+    decision_reason: str | None
+    readiness: dict[str, Any]
+
+
+class ReviewApprovalList(BaseModel):
+    items: list[ReviewApprovalOut]
+
+
+class ReviewCaseOut(BaseModel):
+    case: dict[str, Any]
+    policy: dict[str, Any] | None
+    facts: dict[str, Any]
+    assignment: dict[str, Any] | None
+    holds: list[dict[str, Any]]
+    attempts: list[dict[str, Any]]
+    conversation: dict[str, Any] | None
+    questions: list[ReviewQuestion]
+    findings: list[ReviewFinding]
+    media: list[dict[str, Any]]
+    readiness: ReviewReadiness
+    pending_approvals: list[ReviewApprovalOut]
+    history: list[dict[str, Any]]
+    events: list[dict[str, Any]]
+    allowed: dict[str, Any]
+    note: str
+
+
+class ReviewCaseSummary(BaseModel):
+    id: uuid.UUID
+    case_ref: str
+    state: str
+    row_version: int
+    due_at: datetime
+    open_findings: int
+    pending_approvals: int
+
+
+class ReviewCaseList(BaseModel):
+    items: list[ReviewCaseSummary]
+
+
+class FindingActionIn(BaseModel):
+    action: Literal["START_REVIEW", "CONFIRM", "DISMISS", "REQUEST_INFORMATION", "RESOLVE"]
+    reason: str = Field(max_length=1000)
+    expected_row_version: int
+    idempotency_key: str = Field(min_length=8, max_length=80)
+
+
+class CaseActionIn(BaseModel):
+    action: Literal["REQUEST_CALLBACK", "ESCALATE", "RETURN_TO_REVIEW", "RAISE_FINDING", "ASSESS_ANSWER"]
+    reason: str = Field(max_length=1000)
+    expected_row_version: int
+    idempotency_key: str = Field(min_length=8, max_length=80)
+    reason_code: str | None = Field(default=None, max_length=40)  # escalation reason or assessment outcome
+    question_code: str | None = Field(default=None, max_length=60)
+    category: str | None = Field(default=None, max_length=32)
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] | None = None
+    severity_justification: str | None = Field(default=None, max_length=300)
+
+
+class CaseDecisionIn(BaseModel):
+    decision: Literal["VERIFY", "CLOSE_UNVERIFIED"]
+    reason: str = Field(max_length=1000)
+    expected_row_version: int
+    idempotency_key: str = Field(min_length=8, max_length=80)
+    closure_reason: str | None = Field(default=None, max_length=40)
+
+
+class ApprovalDecisionIn(BaseModel):
+    decision: Literal["APPROVE", "REJECT"]
+    reason: str = Field(max_length=1000)
+    idempotency_key: str = Field(min_length=8, max_length=80)
+
+
+class ReviewActionOut(BaseModel):
+    decision_ref: str
+    action: str
+    from_status: str | None
+    to_status: str | None
+    case_state_before: str
+    case_state_after: str
+    approval_id: uuid.UUID | None
+    replayed: bool = False
+
+
+class ReviewOptions(BaseModel):
+    finding_actions: dict[str, str]
+    case_actions: dict[str, str]
+    decisions: dict[str, str]
+    escalation_reasons: dict[str, str]
+    closure_reasons: list[PickCode]
+    assessments: list[str]
+    categories: list[str]
+    severities: list[str]
+    material_severities: list[str]
     note: str

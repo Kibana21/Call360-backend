@@ -74,8 +74,35 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
     ),
     # S3-A deterministic answer evaluation of simulation runs (COMP-003/006); widened evaluation methods
     "0022_answer_evaluation": ("simulation_answer_evaluation",),
+    # S3-B governed finding rule sets and simulated findings (COMP-008); finding categories widened
+    "0023_compliance_findings": (
+        "finding_rule_set_version",
+        "finding_rule_set_event",
+        "simulation_finding_set",
+        "simulation_finding",
+    ),
+    # S3-C human review and case resolution: the S0-designed review_decision ledger and maker-checker approvals
+    "0024_review_resolution": ("review_approval", "review_decision"),
+    "0026_gpt_live_provider": ("lab_paid_authorisation", "lab_speech_assessment"),
+    "0025_voice_lab": (
+        "lab_control",
+        "lab_budget",
+        "lab_config_change",
+        "lab_prompt",
+        "lab_prompt_version",
+        "lab_dataset",
+        "lab_test_case",
+        "lab_test_case_revision",
+        "lab_experiment",
+        "lab_session",
+        "lab_reservation",
+        "lab_session_event",
+        "lab_media",
+        "lab_transcript",
+        "lab_trial",
+    ),
 }
-DEFERRED_TABLES = frozenset({"risk_override", "review_decision"})  # media_asset: S1-C; transcript_segment: S1-D
+DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 
 # Flag P: provenance + is_synthetic (INV-07, INV-10). Flag E: record_origin.
 P_TABLES: tuple[str, ...] = tuple(t for t in CP02_TABLES if t not in {"external_reference", "case_hold", "case_event"})

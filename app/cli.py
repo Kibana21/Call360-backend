@@ -148,6 +148,43 @@ def cmd_seed_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gpt_live_mock(args: argparse.Namespace) -> int:
+    """A test double of the GPT-Live primary WebSocket on 127.0.0.1 (no network, no key, no money)."""
+    import asyncio
+
+    from app.voice.gpt_live_mock import serve_forever
+
+    asyncio.run(serve_forever("127.0.0.1", args.port))
+    return 0
+
+
+def cmd_review_fixture(args: argparse.Namespace) -> int:
+    """S3-C: record one scripted synthetic conversation on a synthetic case (development / test only)."""
+    import json as _json
+
+    from app.domain import review_fixtures
+
+    if not args.confirm_synthetic:
+        raise SystemExit(
+            "Refusing: pass --confirm-synthetic (records a synthetic fixture conversation, never a real one)"
+        )
+    settings = load_settings(args.env_file)
+    _, factory = _session(args.env_file)
+    with factory() as db:
+        head = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        if head != MIGRATION_HEAD:
+            raise SystemExit(f"Refusing: schema is at {head}, expected {MIGRATION_HEAD}")
+        try:
+            out = review_fixtures.build(db, args.case, _json.loads(args.answers) if args.answers else {})
+        except review_fixtures.FixtureError as exc:
+            db.rollback()
+            print(f"Refusing: {exc}")
+            return 2
+        db.commit()
+    print(f"{settings.target_schema}: {_json.dumps(out, default=str)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="call360")
     parser.add_argument("--env-file", default=None, help="env file (default: $CALL360_ENV_FILE or .env)")
@@ -184,6 +221,17 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--allow-development", action="store_true", help="permit schema call360 (owner approval)")
         p.set_defaults(func=func)
+
+    fx = sub.add_parser("review-fixture", help="S3-C synthetic operational fixture conversation (dev/test only)")
+    fx.add_argument("--case", required=True, help="synthetic case reference, e.g. CB-2026-10504")
+    fx.add_argument(
+        "--answers", default=None, help='JSON: {"Q-CODE": value or "REFUSED"/"UNKNOWN"/"UNCLEAR"/"NOT_ASKED"}'
+    )
+    fx.add_argument("--confirm-synthetic", action="store_true")
+    fx.set_defaults(func=cmd_review_fixture)
+    mk = sub.add_parser("gpt-live-mock", help="S1-E.2 mocked GPT-Live protocol server (loopback only; no model)")
+    mk.add_argument("--port", type=int, default=8765)
+    mk.set_defaults(func=cmd_gpt_live_mock)
 
     args = parser.parse_args(argv)
     return int(args.func(args))
