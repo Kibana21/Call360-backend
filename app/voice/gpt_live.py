@@ -11,6 +11,13 @@ Where the protocol is silent (no speech-started, cancel, truncate or output-done
 client-side policy the documentation describes: the S1-A local VAD detects the caller's speech, clears browser playback
 and drops provider audio until the caller's turn ends. Response boundaries are inferred from audio gaps.
 
+S1-E.2B (first live Azure session LAB-S-00023): the live model waits for the caller before speaking, and background
+voices kept the local VAD "speaking" so every later reply was dropped. Two bounded additions: an optional **opening
+instruction** (part of the versioned prompt) is sent once as ``session.instructions.append`` right after
+``session.started`` and before any caller audio (D-109); and the post-barge-in **suppression is released** at the first
+of the caller's turn end, provider audio resuming after a gap of at least ``RESPONSE_GAP_S`` (a new reply) or
+``suppress_max_s`` since the barge-in (D-110). Each release is traced (``SUPPRESSION_RELEASED``).
+
 Cost safety: the adapter never decides whether it may connect — ``app.voice.lab`` does (paid switch, single-use
 smoke-test authorisation, budget reservation). The adapter only connects to an allowed URL, enforces the duration it
 is given on the server, always sends ``session.close`` (timeout, stop, emergency stop, browser disconnect, error) and
@@ -54,6 +61,8 @@ RESPONSE_DONE_S = 0.8
 START_TIMEOUT_S = 10.0
 MAX_INVALID_EVENTS = 100
 INSTRUCTION_MAX_CHARS = 1500  # well inside the documented 500-token limit for plain English
+OPENING_MAX_CHARS = 500  # S1-E.2B opening instruction (D-109)
+SUPPRESS_MAX_S = 1.5  # S1-E.2B default bound on post-barge-in suppression (D-110; VOICE_LAB_SUPPRESS_MAX_S)
 SGT = ZoneInfo("Asia/Singapore")
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -101,6 +110,8 @@ def check_urls(settings: Any) -> None:
         raise ValueError("VOICE_LAB_CLOSE_TIMEOUT_S must be between 1 and 30")
     if not 2.0 <= settings.voice_lab_start_timeout_s <= 30.0:
         raise ValueError("VOICE_LAB_START_TIMEOUT_S must be between 2 and 30")
+    if not 0.5 <= settings.voice_lab_suppress_max_s <= 5.0:
+        raise ValueError("VOICE_LAB_SUPPRESS_MAX_S must be between 0.5 and 5")
 
 
 # ---- deterministic delegation (no LLM, no tool, no network) --------------------------------------------------------
@@ -129,6 +140,8 @@ class LiveConfig:
     start_timeout_s: float = START_TIMEOUT_S
     wire_rate: int = SAMPLE_RATE  # GPT-Live audio rate on the wire; browser audio is always 16 kHz
     store: bool | None = False  # None: omit (Azure's strict session object does not list ``store``)
+    opening_instruction: str = ""  # S1-E.2B: sent once after session.started, before caller audio ("" = none)
+    suppress_max_s: float = SUPPRESS_MAX_S  # S1-E.2B: upper bound on post-barge-in suppression
 
 
 @dataclass
@@ -211,6 +224,10 @@ class GptLiveProvider:
         self._last_audio = 0.0
         self._in_response = False
         self._suppress = False
+        self._suppress_since = 0.0  # monotonic time of the barge-in that started the current suppression
+        self._last_provider_audio = 0.0  # last provider audio received (forwarded or dropped)
+        # NEW_RESPONSE needs a dropped tail first (provider audio arrives faster than real time)
+        self._dropped_since_barge = False
         self._partial = b""
         self._user_turns = 0
         self._channel: VoiceChannel | None = None
@@ -280,6 +297,7 @@ class GptLiveProvider:
                 started.cancel()
                 stats.end_reason = "PROVIDER_START_FAILED"
                 return
+            await self._send_opening()  # before the uplink starts: no caller audio precedes it
             up = asyncio.ensure_future(self._uplink())
             timer = asyncio.ensure_future(asyncio.sleep(self.cfg.max_duration_s))
             watchdog = asyncio.ensure_future(self._response_watchdog())
@@ -380,7 +398,8 @@ class GptLiveProvider:
             elif change == "speech_stopped":
                 self._user_turns += 1
                 self._stats.user_turns += 1
-                self._suppress = False
+                if self._suppress:
+                    await self._release_suppression("TURN_END")
                 await self._channel.send_event({"type": "input.speech_stopped"})
                 k = self._user_turns
                 if k <= len(self.cfg.turn_instructions) and self.cfg.turn_instructions[k - 1].strip():
@@ -402,10 +421,38 @@ class GptLiveProvider:
         self.outcome.instructions_sent += 1
         await self._trace("INSTRUCTION_APPENDED", origin=source, client_event_id=eid, chars=len(text))
 
+    async def _send_opening(self) -> None:
+        """S1-E.2B (D-109): the prompt's opening instruction, once, right after session.started. A failed send is
+        traced and the session continues — never retried."""
+        text = self.cfg.opening_instruction.strip()[:OPENING_MAX_CHARS]
+        if not text:
+            return
+        eid = _event_id()
+        sent = await self._send(
+            {"type": "session.instructions.append", "event_id": eid, "delegation_id": None, "content": text}
+        )
+        if sent:
+            self.outcome.instructions_sent += 1
+        await self._trace(
+            "OPENING_INSTRUCTION_APPENDED" if sent else "OPENING_INSTRUCTION_NOT_SENT",
+            client_event_id=eid,
+            chars=len(text),
+        )
+
+    async def _release_suppression(self, reason: str) -> None:
+        """End post-barge-in suppression (D-110): TURN_END | NEW_RESPONSE | TIMEOUT."""
+        held_ms = int((time.monotonic() - self._suppress_since) * 1000)
+        self._suppress = False
+        await self._trace("SUPPRESSION_RELEASED", reason=reason, held_ms=held_ms)
+
     async def _barge_in(self) -> None:
         assert self._channel is not None and self._stats is not None
         self._stats.barge_ins += 1
-        self._suppress = True  # drop provider audio until the caller's turn ends (it "may keep speaking briefly")
+        # Drop provider audio (it "may keep speaking briefly") until the caller's turn ends, a new reply starts or
+        # suppress_max_s passes — whichever comes first (D-110).
+        self._suppress = True
+        self._suppress_since = time.monotonic()
+        self._dropped_since_barge = False
         self._play_until = 0.0
         await self._channel.send_event({"type": "playback.clear", "response": self._response, "reason": "barge_in"})
         if self._in_response:
@@ -546,9 +593,18 @@ class GptLiveProvider:
 
     async def _audio_out(self, pcm: bytes) -> None:
         assert self._channel is not None and self._stats is not None
-        if self._suppress or self._browser_gone:
-            return  # after a barge-in, until the caller's turn ends
+        if self._browser_gone:
+            return
         now = time.monotonic()
+        if self._suppress:
+            if now - self._suppress_since >= self.cfg.suppress_max_s:
+                await self._release_suppression("TIMEOUT")
+            elif self._dropped_since_barge and now - self._last_provider_audio >= RESPONSE_GAP_S:
+                await self._release_suppression("NEW_RESPONSE")  # the tail stopped, audio resumed: a new reply
+            else:
+                self._last_provider_audio, self._dropped_since_barge = now, True
+                return  # the interrupted reply's tail: never sent to the browser
+        self._last_provider_audio = now
         if not self._in_response or now - self._last_audio > RESPONSE_GAP_S and not self._speaking():
             self._response += 1
             self._in_response = True

@@ -125,7 +125,7 @@ def gpt_prompt(
 ) -> str:
     body = {
         "name": f"GPT {uuid.uuid4().hex[:6]}",
-        "system_prompt": f"You are a synthetic test voice. {instructions}",
+        "system_prompt": f"You are a synthetic test voice. [mock:greet] {instructions}",  # S1-E.2B: else it waits
         "turn_instructions": turns if turns is not None else ["Ask the caller to confirm they can hear you"],
         "provider": provider,
         "model": "gpt-live-1",

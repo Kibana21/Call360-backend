@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     # audio and api-key header) or OPENAI.
     voice_lab_gpt_live_mock_profile: Literal["AZURE", "OPENAI"] = "AZURE"
     voice_lab_start_timeout_s: float = 10.0  # connect + session.started; bounded 2–30 s
+    # S1-E.2B (D-110): after a barge-in, provider audio is dropped for at most this long (bounded 0.5–5 s), then
+    # released even if the local VAD still reports caller speech (background voices can keep it "speaking").
+    voice_lab_suppress_max_s: float = 1.5
 
     access_token_ttl_seconds: int = 600
     refresh_idle_seconds: int = 1800

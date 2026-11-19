@@ -12,6 +12,12 @@ usage seconds; the sideband ``…/{id}/attach`` close. Fault injection with mark
 invalid events), ``[mock:expire=N]`` (close with reason ``expired`` after N s), ``[mock:silent]`` (no greeting),
 ``[mock:delegate]`` (delegate on the first caller turn), ``[mock:nostart]`` (never send ``session.started``). It
 is a test double, not a description of model behaviour.
+
+S1-E.2B (D-111), after the first live Azure session: like the live model, the mock **waits for the caller** — it greets
+only when an instruction arrives before the caller has spoken (the adapter's opening instruction) or when the
+instructions contain ``[mock:greet]`` (the previous behaviour: greet at once); otherwise it first speaks after the
+caller's first turn. ``[mock:talk-over]`` keeps speaking while the caller (or background noise) is loud and follows
+the greeting with its reply after a 1 s pause — the live failure mode in which the local VAD never reports a turn end.
 """
 
 from __future__ import annotations
@@ -218,6 +224,25 @@ class MockGptLiveServer:
                 speaking["task"].cancel()
             speaking["task"] = asyncio.ensure_future(speak(pcm, text))
 
+        talk_over = "[mock:talk-over]" in marks
+        greeted = {"done": False}
+
+        async def greeting_then_reply() -> None:
+            await speak(*GREETING)
+            await asyncio.sleep(1.0)
+            await speak(*REPLY)
+
+        def greet() -> None:
+            if greeted["done"] or "[mock:silent]" in marks:
+                return
+            greeted["done"] = True
+            if talk_over:
+                if speaking["task"] is not None and not speaking["task"].done():
+                    speaking["task"].cancel()
+                speaking["task"] = asyncio.ensure_future(greeting_then_reply())
+            else:
+                say(*GREETING)
+
         async def usage_loop() -> None:
             while not s.closed:
                 await asyncio.sleep(2)
@@ -254,8 +279,8 @@ class MockGptLiveServer:
                 ws.transport.abort() if hasattr(ws, "transport") else await ws.close()
 
         bg = [asyncio.ensure_future(usage_loop()), asyncio.ensure_future(faults())]
-        if "[mock:silent]" not in marks:
-            say(*GREETING)
+        if "[mock:greet]" in marks:
+            greet()
         loud = quiet = turns = 0
         in_speech = False
         pending_delegation: str | None = None
@@ -273,7 +298,8 @@ class MockGptLiveServer:
                         if loud >= 2:
                             in_speech, quiet = True, 0
                             await asyncio.sleep(0.2)  # "may keep speaking briefly after an interruption"
-                            speaking["cut"] = True
+                            if not talk_over:
+                                speaking["cut"] = True
                     else:
                         quiet = quiet + 1 if level < -50 else 0
                         if quiet >= 6:
@@ -287,6 +313,7 @@ class MockGptLiveServer:
                                     "end_ms": 0,
                                 }
                             )
+                            greeted["done"] = True  # the caller spoke first: no separate greeting any more
                             if turns == 2 or ("[mock:delegate]" in marks and turns == 1):
                                 pending_delegation = f"del_{uuid.uuid4().hex[:10]}"
                                 await send(
@@ -313,6 +340,8 @@ class MockGptLiveServer:
                             "end_ms": 0,
                         }
                     )
+                    if turns == 0 and not in_speech:
+                        greet()  # an opening instruction before the caller has spoken
                 elif kind == "session.commentary.append":
                     await send(
                         {

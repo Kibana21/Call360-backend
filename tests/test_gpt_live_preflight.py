@@ -196,7 +196,7 @@ def test_no_stale_audio_after_interruption(mock_server: MockGptLiveServer) -> No
             headers={},
             model="gpt-live-1",
             voice="marin",
-            instructions="",
+            instructions="[mock:greet]",  # S1-E.2B: the mock waits for the caller otherwise
             turn_instructions=[],
             max_duration_s=20,
             close_timeout_s=2,

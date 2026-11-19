@@ -109,7 +109,7 @@ def authorise(m: TestClient, seconds: int = 120) -> dict[str, Any]:
 def az_prompt(c: TestClient, instructions: str = "", model: str = DEPLOYMENT) -> str:
     body = {
         "name": "Azure GPT-Live prompt",
-        "system_prompt": f"Synthetic Azure test voice. {instructions}",
+        "system_prompt": f"Synthetic Azure test voice. [mock:greet] {instructions}",  # S1-E.2B: mock waits otherwise
         "turn_instructions": ["Ask the caller to confirm"],
         "provider": "AZURE_OPENAI_GPT_LIVE",
         "model": model,

@@ -138,14 +138,43 @@ def prompt_content_sha(c: dict[str, Any]) -> str:
     return _sha(_j({k: c[k] for k in keys}).encode())
 
 
+OPENING_MAX_CHARS = 500  # S1-E.2B (D-109)
+
+
+def opening_instruction(version: dict[str, Any]) -> str:
+    """The prompt version's opening instruction (stored in ``parameters``; part of the prompt SHA-256)."""
+    v = (version.get("parameters") or {}).get("opening_instruction")
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _normalise_opening(body: dict[str, Any], p: lc.Provider) -> dict[str, Any]:
+    """Move the optional opening instruction into ``parameters`` (no migration; covered by the SHA-256). Only the
+    GPT-Live providers (and their loopback mock) send it; the keyless mocks speak a fixed message and refuse it."""
+    params = dict(body.get("parameters") or {})
+    raw = body.get("opening_instruction")
+    if raw is None:
+        raw = params.get("opening_instruction")
+    text_ = raw.strip() if isinstance(raw, str) else ""
+    params.pop("opening_instruction", None)
+    if text_:
+        if len(text_) > OPENING_MAX_CHARS:
+            raise LabError(422, "OPENING_TOO_LONG", f"Opening instruction: at most {OPENING_MAX_CHARS} characters")
+        if p.code not in GPT_PROVIDERS:
+            raise LabError(422, "OPENING_NOT_SUPPORTED", f"{p.code} speaks a fixed message; no opening instruction")
+        params["opening_instruction"] = text_
+    return {**body, "parameters": params}
+
+
 def save_prompt(db: Session, actor: str, body: dict[str, Any], prompt_id: uuid.UUID | None = None) -> dict[str, Any]:
     """Create a prompt or append a new version (insert-only history; an unchanged configuration is refused)."""
-    if _check_provider_config(body["provider"], body["model"], body["voice"]).hidden:
+    p = _check_provider_config(body["provider"], body["model"], body["voice"])
+    if p.hidden:
         raise LabError(
             422,
             "PROVIDER_RENAMED",
             f"{body['provider']} is a legacy code; use OPENAI_GPT_LIVE (or the preferred AZURE_OPENAI_GPT_LIVE)",
         )
+    body = _normalise_opening(body, p)
     now = _now()
     if prompt_id is None:
         prompt_id = uuid.uuid4()
@@ -204,6 +233,7 @@ def prompt(db: Session, prompt_id: uuid.UUID) -> dict[str, Any]:
     if head is None:
         raise LabError(404, "NOT_FOUND", "Prompt not found")
     versions = _all(db, "SELECT * FROM lab_prompt_version WHERE prompt_id = :i ORDER BY version_no DESC", i=prompt_id)
+    versions = [{**v, "opening_instruction": opening_instruction(v) or None} for v in versions]
     return {**head, "versions": versions, "latest": versions[0]}
 
 

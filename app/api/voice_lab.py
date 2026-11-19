@@ -217,6 +217,8 @@ class LabPromptIn(BaseModel):
     model: str = Field(min_length=1, max_length=80)
     voice: str = Field(min_length=1, max_length=80)
     parameters: dict[str, Any] = Field(default_factory=dict)
+    # S1-E.2B (D-109): GPT-Live providers only; sent once right after session.started (stored in parameters).
+    opening_instruction: str | None = Field(None, max_length=500)
     change_note: str | None = Field(None, max_length=500)
     expected_version: int | None = None
 
@@ -230,6 +232,7 @@ class LabPromptVersionOut(_M):
     model: str
     voice: str
     parameters: dict[str, Any]
+    opening_instruction: str | None = None
     change_note: str
     sha256: str
     created_by: str
@@ -1357,6 +1360,7 @@ async def lab_stream(websocket: WebSocket, session_id: uuid.UUID) -> None:
                     "prompt_sha256": pv["sha256"],
                     "system_prompt_chars": len(pv["system_prompt"]),
                     "turn_instructions": len(pv["turn_instructions"]),
+                    "opening_instruction_chars": len(lab.opening_instruction(pv)),
                     "note": "Sent in session.start (GPT-Live)"
                     if s["provider"] in lab.GPT_PROVIDERS
                     else "The mock provider does not interpret prompts; it speaks the fixed synthetic test message",
@@ -1544,6 +1548,8 @@ async def gpt_live_provider(app: Any, s: dict[str, Any], pv: dict[str, Any]) -> 
         start_timeout_s=st.voice_lab_start_timeout_s,
         wire_rate=ep.wire_rate if ep else 16000,
         store=None if ep and ep.vendor == "AZURE" else False,
+        opening_instruction=lab.opening_instruction(pv),
+        suppress_max_s=st.voice_lab_suppress_max_s,
     )
     provider = gpt_live.GptLiveProvider(cfg, connect=connect, label=s["provider"])
     provider.endpoint_info = ep.describe() if ep else {"error": "endpoint not configured"}  # non-secret
