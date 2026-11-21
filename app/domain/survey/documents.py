@@ -72,6 +72,10 @@ def _ref(v: Any) -> bool:
 
 
 #: kind -> (required fields, optional fields); each field has one structural check.
+#: ``authoring`` (FI-1, optional, on ITEM, MODULE and CONDITION): notes an editor keeps with the document — a module's
+#: stated intent and recommended entry rule, a condition's parameter labels, the wording version of an unplaced item.
+#: It is part of the document and of its hash, and it has NO execution meaning: no validator rule, condition or route
+#: reads it. A document without it is unchanged.
 _CONTRACT: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     "OPTION_SET": ({"schema": _str, "code": _str, "version": _posint, "options": _arr}, {}),
     "ITEM": (
@@ -85,6 +89,7 @@ _CONTRACT: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
             "lifecycle_role": _one_of(*LIFECYCLE_ROLES),
             # a code of the governed catalog; its classes and meaning await D-NA-5 / D-NA-10 and are not approved
             "response_obligation": _str,
+            "authoring": _obj,
         },
     ),
     "WORDING": (
@@ -100,7 +105,7 @@ _CONTRACT: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     ),
     "CONDITION": (
         {"schema": _str, "code": _str, "version": _posint, "name": _text, "ast": _obj},
-        {"params": _obj, "inputs": _obj},
+        {"params": _obj, "inputs": _obj, "authoring": _obj},
     ),
     "MODULE": (
         {
@@ -112,7 +117,7 @@ _CONTRACT: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
             "nodes": _arr,
             "edges": _arr,
         },
-        {"entry": lambda v: v is None or _str(v), "kind": _str},
+        {"entry": lambda v: v is None or _str(v), "kind": _str, "authoring": _obj},
     ),
     "SURVEY": ({"schema": _str, "code": _str, "sequence": _arr}, {}),
 }

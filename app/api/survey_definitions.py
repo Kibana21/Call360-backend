@@ -1,9 +1,10 @@
 """SS-03A.3 — survey definition API: drafts, immutable candidates, published versions, the library and condition
-evaluation. Fifteen operations under ``/api/v1``, with "survey" vocabulary (owner decision D-166).
+evaluation. Seventeen operations under ``/api/v1``, with "survey" vocabulary (owner decision D-166): the fifteen of
+SS-03A, and the draft-documents read and the atomic save of FI-1.
 
-Registered ONLY when the server setting ``survey_definitions_enabled`` is on; it is off by default, and no screen calls
-these operations. The path is ``/survey-definitions``: the bare plural of "survey" is a legacy route name retired by
-ADR-0007 and is deliberately not reactivated.
+Registered ONLY when the server setting ``survey_definitions_enabled`` is on; it is off by default. The path is
+``/survey-definitions``: the bare plural of "survey" is a legacy route name retired by ADR-0007 and is deliberately
+not reactivated.
 
 Permissions: ``survey.read``, ``survey.edit``, ``survey.approve``, ``survey.publish``: four separate permissions,
 none implying another, granted to no role by the migration. Identity rules are enforced by the service and by the
@@ -81,6 +82,44 @@ class SurveyDraftOut(BaseModel):
     content_sha256: str
     assets: list[SurveyDraftAsset]
     updated_at: datetime
+
+
+class SurveyDraftSaveIn(BaseModel):
+    expected_revision: int = Field(ge=0)
+    operations: list[dict[str, Any]] = Field(min_length=1, max_length=store.MAX_BATCH)
+
+
+class SurveyDraftAssetDocument(BaseModel):
+    kind: str
+    code: str
+    version: int
+    state: Literal["DRAFT", "FROZEN"]
+    sha256: str
+    owned: bool = Field(
+        description="True when this survey owns the version; a frozen version of another survey is pinned."
+    )
+    document: dict[str, Any]
+
+
+class SurveyCatalogs(BaseModel):
+    fields: dict[str, dict[str, Any]]
+    outcomes: dict[str, str]
+    response_obligations: list[str]
+
+
+class SurveyDraftDocumentsOut(BaseModel):
+    survey_id: uuid.UUID
+    code: str
+    name: str
+    purpose: str
+    revision: int
+    content: dict[str, Any]
+    content_sha256: str
+    updated_at: datetime
+    updated_by: str | None
+    assets: list[SurveyDraftAssetDocument]
+    catalogs: SurveyCatalogs
+    note: str = NOTE
 
 
 class SurveyOperationIn(BaseModel):
@@ -272,6 +311,13 @@ def _draft_out(db: Session, sid: uuid.UUID) -> SurveyDraftOut:
     )  # fmt: skip
 
 
+def _documents_out(db: Session, row: dict[str, Any]) -> SurveyDraftDocumentsOut:
+    return SurveyDraftDocumentsOut(
+        survey_id=row["id"], code=row["code"], name=row["name"], purpose=row["purpose"],
+        **store.draft_documents(db, row["id"]),
+    )  # fmt: skip
+
+
 def _candidate_out(db: Session, c: dict[str, Any]) -> SurveyCandidateOut:
     return SurveyCandidateOut(
         id=c["id"], survey_id=c["survey_definition_id"], n=c["n"], status=store.status_of(db, c["id"]) or "UNKNOWN",
@@ -376,8 +422,9 @@ def survey_draft_operation(
     auth: AuthContext = Depends(require(EDIT)),
     db: Session = Depends(get_db),
 ) -> SurveyDraftOut:
-    """Apply ONE operation to the draft: ``PUT_ASSET``, ``REMOVE_ASSET`` or ``SET_CONTENT``. ``expected_revision``
-    must be the draft's current revision; a stale one is refused with ``STALE_DRAFT`` and nothing is changed."""
+    """Apply ONE operation to the draft: ``PUT_ASSET``, ``REMOVE_ASSET``, ``SET_CONTENT`` or ``SET_DETAILS``.
+    ``expected_revision`` must be the draft's current revision; a stale one is refused with ``STALE_DRAFT`` and
+    nothing is changed."""
     _write(request, auth)
     try:
         store.apply_operation(
@@ -388,6 +435,53 @@ def survey_draft_operation(
         raise _err(exc) from exc
     db.commit()
     return _draft_out(db, survey_id)
+
+
+@router.get(
+    "/survey-definitions/{survey_id}/draft/documents",
+    response_model=SurveyDraftDocumentsOut,
+    operation_id="survey_draft_documents",
+    responses=_ERR,
+)
+def survey_draft_documents(
+    survey_id: uuid.UUID, auth: AuthContext = Depends(require(READ)), db: Session = Depends(get_db)
+) -> SurveyDraftDocumentsOut:
+    """FI-1 — everything needed to open the draft in an editor: the content document, the full document of every asset
+    version the survey owns or pins, the server's hash and state of each, and the governed catalogs."""
+    try:
+        return _documents_out(db, store.survey(db, survey_id, _markets(auth)))
+    except store.SurveyError as exc:
+        raise _err(exc) from exc
+
+
+@router.post(
+    "/survey-definitions/{survey_id}/draft/save",
+    response_model=SurveyDraftDocumentsOut,
+    operation_id="survey_draft_save",
+    responses=_ERR,
+)
+@csrf_protected
+def survey_draft_save(
+    survey_id: uuid.UUID,
+    body: SurveyDraftSaveIn,
+    request: Request,
+    auth: AuthContext = Depends(require(EDIT)),
+    db: Session = Depends(get_db),
+) -> SurveyDraftDocumentsOut:
+    """FI-1 — one SAVE, atomically: every operation, in order, as ONE revision, or none of them. ``expected_revision``
+    must be the draft's current revision (``STALE_DRAFT`` otherwise, nothing changed). If any operation is refused the
+    whole save is rolled back and the error names the operation. The response is the complete saved draft with the
+    server's hashes: a client reports success only from it."""
+    _write(request, auth)
+    try:
+        store.apply_batch(
+            db, survey_id, _markets(auth), body.expected_revision, body.operations, auth.actor, request_meta(request)
+        )
+    except store.SurveyError as exc:
+        db.rollback()
+        raise _err(exc) from exc
+    db.commit()
+    return _documents_out(db, store.survey(db, survey_id, _markets(auth)))
 
 
 @router.post(

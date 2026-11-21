@@ -62,7 +62,9 @@ PEOPLE = (
 )  # fmt: skip
 
 
-def _create(db, accounts: dict[str, str]) -> list[str]:  # type: ignore[no-untyped-def]
+def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> list[str]:  # type: ignore[no-untyped-def]
+    """``people`` and ``market`` default to the three development identities in SG; the browser end-to-end setup
+    (scripts/e2e_survey_setup.py) passes its own, for the isolated TEST schema only."""
     done: list[str] = []
     now = datetime.now(UTC)
     provider = local_provider(db)
@@ -71,7 +73,7 @@ def _create(db, accounts: dict[str, str]) -> list[str]:  # type: ignore[no-untyp
         raise SystemExit(
             "Refusing: the survey permissions do not exist. Apply migration 0027_survey_definitions first."
         )
-    for role_code, role_name, group_code, username, display, wanted in PEOPLE:
+    for role_code, role_name, group_code, username, display, wanted in people or PEOPLE:
         role = db.execute(select(Role).where(Role.code == role_code)).scalar()
         if role is None:
             role = Role(id=uuid.uuid4(), code=role_code, name=role_name)
@@ -91,7 +93,7 @@ def _create(db, accounts: dict[str, str]) -> list[str]:  # type: ignore[no-untyp
             db.add(GroupRoleMapping(id=uuid.uuid4(), group_id=group.id, role_id=role.id, approved_by=BY))
             db.add(
                 GroupScopeMapping(
-                    id=uuid.uuid4(), group_id=group.id, market_code=MARKET, effective_from=now, created_by=BY,
+                    id=uuid.uuid4(), group_id=group.id, market_code=market, effective_from=now, created_by=BY,
                     change_reason="Development-only survey identity (SS-03A enablement)",
                 )
             )  # fmt: skip
@@ -116,7 +118,7 @@ def _create(db, accounts: dict[str, str]) -> list[str]:  # type: ignore[no-untyp
         write_audit(
             db, action="ADMIN.ROLE_PERMISSIONS_SET", outcome="SUCCEEDED", actor=Actor(service="dev-survey-identities"),
             entity_type="role", entity_id=role_code, reason="Development-only survey role (SS-03A enablement)",
-            after={"role": role_code, "permissions": list(wanted), "group": group_code, "market": MARKET},
+            after={"role": role_code, "permissions": list(wanted), "group": group_code, "market": market},
         )  # fmt: skip
     return done
 

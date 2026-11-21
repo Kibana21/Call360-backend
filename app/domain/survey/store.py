@@ -167,22 +167,16 @@ def _event(
 
 
 # ----------------------------------------------------------------------------------------------- the draft: operations
-def apply_operation(
-    db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int, operation: Mapping[str, Any],
-    actor: Actor, meta: RequestMeta | None = None,
-) -> dict[str, Any]:  # fmt: skip
-    """Applies ONE operation to the draft. A stale ``expected_revision`` is refused before anything is written."""
-    survey(db, sid, markets)
-    d = draft(db, sid, lock=True)
-    if d["revision"] != expected_revision:
-        raise SurveyError(
-            409,
-            "STALE_DRAFT",
-            f"The draft is at revision {d['revision']}; this change was made against {expected_revision}",
-        )
-    who, op = _ref(actor), operation.get("op")
+MAX_BATCH = 500
+
+
+def _apply_one(
+    db: Session, sid: uuid.UUID, content: Mapping[str, Any], operation: Mapping[str, Any], who: str
+) -> tuple[Mapping[str, Any], dict[str, Any]]:
+    """One operation against the locked draft: writes the asset (if any) and returns the content and a summary. It does
+    NOT touch the draft row; the caller advances the revision once, for one operation or for a whole batch."""
+    op = operation.get("op")
     summary: dict[str, Any] = {"op": op}
-    content = d["content"]
     if op == "SET_CONTENT":
         new = operation.get("content")
         problems = check_document("SURVEY", new)
@@ -193,58 +187,84 @@ def apply_operation(
         assert isinstance(new, dict)
         if new["code"] != content["code"]:
             raise SurveyError(422, "DOCUMENT_INVALID", "The content names a different survey")
-        content = new
-    elif op in ("PUT_ASSET", "REMOVE_ASSET"):
-        kind = str(operation.get("kind"))
-        if kind not in ASSET_KINDS:
-            raise SurveyError(422, "OPERATION_INVALID", "Unknown kind of asset")
-        if op == "PUT_ASSET":
-            doc = operation.get("document")
-            problems = check_document(kind, doc)
-            if problems:
-                raise SurveyError(
-                    422, "DOCUMENT_INVALID", "The document is not well formed", [p.__dict__ for p in problems]
-                )
-            assert isinstance(doc, dict)
-            code, version = asset_key(kind, doc)
-        else:
-            code, version = str(operation.get("code")), int(operation.get("version") or 0)
-        existing = _one(
-            db,
-            "SELECT id, state, owner_definition_id FROM survey_asset_version WHERE kind = :k AND code = :c AND "
-            "version = :v FOR UPDATE",
-            k=kind, c=code, v=version,
-        )  # fmt: skip
-        if existing and existing["state"] == "FROZEN":
-            # a frozen version is never changed: a change is a new version
-            raise SurveyError(409, "ASSET_FROZEN", f"{kind} {code} version {version} is frozen; create a new version")
-        if existing and existing["owner_definition_id"] != sid:
-            raise SurveyError(
-                409, "ASSET_OWNED_ELSEWHERE", f"{kind} {code} version {version} is a draft of another survey"
-            )
-        if op == "PUT_ASSET":
-            params = {"k": kind, "c": code, "v": version, "j": json.dumps(doc), "h": sha256_hex(doc), "by": who}
-            if existing:
-                db.execute(
-                    text("UPDATE survey_asset_version SET content = CAST(:j AS jsonb), sha256 = :h WHERE id = :i"),
-                    {"j": params["j"], "h": params["h"], "i": existing["id"]},
-                )
-            else:
-                db.execute(
-                    text(
-                        "INSERT INTO survey_asset_version (id, kind, code, version, state, content, sha256, "
-                        "owner_definition_id, created_by) VALUES (:i, :k, :c, :v, "
-                        "'DRAFT', CAST(:j AS jsonb), :h, :o, :by)"
-                    ),
-                    {**params, "i": uuid.uuid4(), "o": sid},
-                )
-        else:
-            if not existing:
-                raise SurveyError(404, "NOT_FOUND", "No such draft asset")
-            db.execute(text("DELETE FROM survey_asset_version WHERE id = :i"), {"i": existing["id"]})
-        summary.update(kind=kind, code=code, version=version)
-    else:
+        return new, summary
+    if op == "SET_DETAILS":
+        # the survey's name and purpose: descriptive, not part of any hashed document
+        name, purpose = operation.get("name"), operation.get("purpose", "")
+        if not isinstance(name, str) or not 3 <= len(name.strip()) <= 160:
+            raise SurveyError(422, "OPERATION_INVALID", "A survey name has 3 to 160 characters")
+        if not isinstance(purpose, str) or len(purpose) > 2000:
+            raise SurveyError(422, "OPERATION_INVALID", "A purpose has at most 2000 characters")
+        db.execute(
+            text("UPDATE survey_definition SET name = :n, purpose = :p WHERE id = :i"),
+            {"n": name.strip(), "p": purpose, "i": sid},
+        )
+        return content, {**summary, "name": name.strip()}
+    if op not in ("PUT_ASSET", "REMOVE_ASSET"):
         raise SurveyError(422, "OPERATION_INVALID", "Unknown operation")
+    kind = str(operation.get("kind"))
+    if kind not in ASSET_KINDS:
+        raise SurveyError(422, "OPERATION_INVALID", "Unknown kind of asset")
+    if op == "PUT_ASSET":
+        doc = operation.get("document")
+        problems = check_document(kind, doc)
+        if problems:
+            raise SurveyError(
+                422, "DOCUMENT_INVALID", "The document is not well formed", [p.__dict__ for p in problems]
+            )
+        assert isinstance(doc, dict)
+        code, version = asset_key(kind, doc)
+    else:
+        v = operation.get("version")
+        code, version = str(operation.get("code")), int(v) if isinstance(v, int) else 0
+    existing = _one(
+        db,
+        "SELECT id, state, owner_definition_id FROM survey_asset_version WHERE kind = :k AND code = :c AND "
+        "version = :v FOR UPDATE",
+        k=kind, c=code, v=version,
+    )  # fmt: skip
+    if existing and existing["state"] == "FROZEN":
+        # a frozen version is never changed: a change is a new version
+        raise SurveyError(409, "ASSET_FROZEN", f"{kind} {code} version {version} is frozen; create a new version")
+    if existing and existing["owner_definition_id"] != sid:
+        raise SurveyError(409, "ASSET_OWNED_ELSEWHERE", f"{kind} {code} version {version} is a draft of another survey")
+    if op == "PUT_ASSET":
+        params = {"k": kind, "c": code, "v": version, "j": json.dumps(doc), "h": sha256_hex(doc), "by": who}
+        if existing:
+            db.execute(
+                text("UPDATE survey_asset_version SET content = CAST(:j AS jsonb), sha256 = :h WHERE id = :i"),
+                {"j": params["j"], "h": params["h"], "i": existing["id"]},
+            )
+        else:
+            db.execute(
+                text(
+                    "INSERT INTO survey_asset_version (id, kind, code, version, state, content, sha256, "
+                    "owner_definition_id, created_by) VALUES (:i, :k, :c, :v, "
+                    "'DRAFT', CAST(:j AS jsonb), :h, :o, :by)"
+                ),
+                {**params, "i": uuid.uuid4(), "o": sid},
+            )
+    else:
+        if not existing:
+            raise SurveyError(404, "NOT_FOUND", "No such draft asset")
+        db.execute(text("DELETE FROM survey_asset_version WHERE id = :i"), {"i": existing["id"]})
+    return content, {**summary, "kind": kind, "code": code, "version": version}
+
+
+def _locked_draft(db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int) -> dict[str, Any]:
+    survey(db, sid, markets)
+    d = draft(db, sid, lock=True)
+    if d["revision"] != expected_revision:
+        raise SurveyError(
+            409,
+            "STALE_DRAFT",
+            f"The draft is at revision {d['revision']}; this change was made against {expected_revision}",
+            [{"current_revision": d["revision"], "expected_revision": expected_revision}],
+        )
+    return d
+
+
+def _advance(db: Session, d: Mapping[str, Any], content: Mapping[str, Any], who: str) -> None:
     makers = sorted(set(d["makers"]) | {who})
     db.execute(
         text(
@@ -253,10 +273,105 @@ def apply_operation(
         ),
         {"c": json.dumps(content), "m": json.dumps(makers), "by": who, "i": d["id"]},
     )
+
+
+def apply_operation(
+    db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int, operation: Mapping[str, Any],
+    actor: Actor, meta: RequestMeta | None = None,
+) -> dict[str, Any]:  # fmt: skip
+    """Applies ONE operation to the draft. A stale ``expected_revision`` is refused before anything is written."""
+    d = _locked_draft(db, sid, markets, expected_revision)
+    who = _ref(actor)
+    content, summary = _apply_one(db, sid, d["content"], operation, who)
+    _advance(db, d, content, who)
     _audit(
         db, actor, meta, "SURVEY.DRAFT_CHANGED", "survey_definition", sid, {**summary, "revision": d["revision"] + 1}
     )
     return draft(db, sid)
+
+
+def apply_batch(
+    db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int,
+    operations: Sequence[Mapping[str, Any]], actor: Actor, meta: RequestMeta | None = None,
+) -> dict[str, Any]:  # fmt: skip
+    """FI-1 — one SAVE: every operation, in order, as ONE revision. All or nothing: the first operation that is refused
+    raises, and the caller's rollback leaves the draft, every asset and the audit trail exactly as they were. A stale
+    ``expected_revision`` is refused before anything is written. The error names the operation that failed."""
+    if not 1 <= len(operations) <= MAX_BATCH:
+        raise SurveyError(422, "OPERATION_INVALID", f"A save holds 1 to {MAX_BATCH} operations")
+    d = _locked_draft(db, sid, markets, expected_revision)
+    who = _ref(actor)
+    content: Mapping[str, Any] = d["content"]
+    summaries: list[dict[str, Any]] = []
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, Mapping):
+            raise SurveyError(422, "OPERATION_INVALID", "An operation is an object", [{"operation_index": index}])
+        try:
+            content, summary = _apply_one(db, sid, content, operation, who)
+        except SurveyError as exc:
+            exc.details = [{"operation_index": index, "op": operation.get("op"), "kind": operation.get("kind")}] + list(
+                exc.details or []
+            )
+            raise
+        summaries.append(summary)
+    _advance(db, d, content, who)
+    counts: dict[str, int] = {}
+    for s in summaries:
+        counts[str(s["op"])] = counts.get(str(s["op"]), 0) + 1
+    _audit(
+        db, actor, meta, "SURVEY.DRAFT_SAVED", "survey_definition", sid,
+        {"revision": d["revision"] + 1, "operations": len(summaries), "by_operation": counts,
+         "assets": [f"{s['op']}:{s['kind']}:{s['code']}@{s['version']}" for s in summaries if "kind" in s][:200]},
+    )  # fmt: skip
+    return draft(db, sid)
+
+
+def draft_documents(db: Session, sid: uuid.UUID) -> dict[str, Any]:
+    """FI-1 — everything an editor needs to open the draft: the content, and the full document of every asset version
+    this survey owns (draft or frozen) or its content pins, with the server's hash and state for each."""
+    d = draft(db, sid)
+    rows = {
+        (r["kind"], r["code"], r["version"]): r
+        for r in _all(
+            db,
+            "SELECT kind, code, version, state, sha256, content, owner_definition_id FROM survey_asset_version "
+            "WHERE owner_definition_id = :s",
+            s=sid,
+        )
+    }
+    for e in manifest_of(load_bundle(db, d["content"])):
+        key = (e["kind"], e["code"], e["version"])
+        if key not in rows:
+            row = _one(
+                db,
+                "SELECT kind, code, version, state, sha256, content, owner_definition_id FROM survey_asset_version "
+                "WHERE kind = :k AND code = :c AND version = :v",
+                k=e["kind"], c=e["code"], v=e["version"],
+            )  # fmt: skip
+            if row:
+                rows[key] = row
+    who = _one(db, "SELECT display_name FROM principal WHERE CAST(id AS text) = :r", r=d["updated_by"])
+    fields, outcomes, obligations = catalogs(db)
+    return {
+        "revision": d["revision"],
+        "content": d["content"],
+        "content_sha256": sha256_hex(d["content"]),
+        "updated_at": d["updated_at"],
+        "updated_by": who["display_name"] if who else None,
+        "assets": [
+            {
+                "kind": r["kind"],
+                "code": r["code"],
+                "version": r["version"],
+                "state": r["state"],
+                "sha256": r["sha256"],
+                "owned": r["owner_definition_id"] == sid,
+                "document": r["content"],
+            }
+            for _, r in sorted(rows.items())
+        ],  # fmt: skip
+        "catalogs": {"fields": fields, "outcomes": outcomes, "response_obligations": sorted(obligations)},
+    }
 
 
 # ------------------------------------------------------------------------------------------ resolving and validating

@@ -52,6 +52,8 @@ MATRIX = {
     ("GET", "/api/v1/survey-definitions/{survey_id}/draft"): "survey.read",
     ("POST", "/api/v1/survey-definitions/{survey_id}/draft/operations"): "survey.edit",
     ("POST", "/api/v1/survey-definitions/{survey_id}/draft/validate"): "survey.edit",
+    ("GET", "/api/v1/survey-definitions/{survey_id}/draft/documents"): "survey.read",  # FI-1
+    ("POST", "/api/v1/survey-definitions/{survey_id}/draft/save"): "survey.edit",  # FI-1
     ("POST", "/api/v1/survey-definitions/{survey_id}/candidates"): "survey.edit",
     ("GET", "/api/v1/survey-candidates/{candidate_id}"): "survey.read",
     ("POST", "/api/v1/survey-candidates/{candidate_id}/decision"): "survey.approve",
@@ -142,14 +144,14 @@ def test_with_the_setting_off_no_survey_route_exists_and_the_product_is_unchange
     assert client.get("/health/ready").status_code == 200
 
 
-def test_enabling_the_setting_adds_exactly_fifteen_operations_and_changes_no_other_route(
+def test_enabling_the_setting_adds_exactly_seventeen_operations_and_changes_no_other_route(
     survey_app: Any, app: Any
 ) -> None:
     def routes(a: Any) -> set[tuple[str, str]]:
         return {(m.upper(), p) for p, ops in a.openapi()["paths"].items() for m in ops}
 
     added = routes(survey_app) - routes(app)
-    assert added == set(MATRIX) and len(added) == 15
+    assert added == set(MATRIX) and len(added) == 17  # fifteen of SS-03A, two of FI-1
     assert routes(app) <= routes(survey_app)  # every existing route is still there
     # nothing that speaks, dials or runs a call is among them: no live-call workflow is enabled by this setting
     assert not [p for _, p in added if any(w in p for w in ("voice", "call", "session", "run", "plan", "assign"))]
@@ -384,7 +386,7 @@ def test_condition_evaluation_is_three_valued_and_stores_nothing(trio: Any, db: 
 
 
 # ------------------------------------------------------------------------------------------------------- the contract
-def test_the_published_contract_gains_the_fifteen_operations_and_loses_nothing() -> None:
+def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing() -> None:
     root = Path(__file__).resolve().parents[1]
     spec = json.loads((root / "contracts" / "generated" / "openapi.json").read_text())
     ops = {
@@ -394,12 +396,12 @@ def test_the_published_contract_gains_the_fifteen_operations_and_loses_nothing()
         if m in ("get", "post", "put", "patch", "delete")
     }
     assert set(MATRIX) <= ops
-    assert len([o for o in ops if is_survey_path(o[1])]) == 15
-    assert len(ops) == 199 + 15  # the 199 operations of the accepted contract, and these
+    assert len([o for o in ops if is_survey_path(o[1])]) == 17
+    assert len(ops) == 199 + 17  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
     assert not [k for k in schemas if "__" in k]
     survey_schemas = [k for k in schemas if k.startswith("Survey") and k not in ("SurveyRunDetail",)]
-    assert len(survey_schemas) == 22 and len(schemas) == 405 + 22
+    assert len(survey_schemas) == 26 and len(schemas) == 405 + 26  # 22 of SS-03A, 4 of FI-1
     assert MIGRATION_HEAD == "0027_survey_definitions"
