@@ -100,3 +100,16 @@ def build_draft(db: Session, author: Account, prefix: str = "K1") -> tuple[uuid.
         store.apply_operation(db, sid, MARKETS, store.draft(db, sid)["revision"], op, actor)
     db.commit()
     return sid, sfx
+
+
+ACK_REASON = "Synthetic test content; acknowledged for this test."
+
+
+def acks_for(db: Session, sid: uuid.UUID) -> list[dict[str, Any]]:
+    """An acknowledgement, with a reason, for every server-governed warning of the survey's current draft (FI-2)."""
+    content = store.draft(db, sid)["content"]
+    return [
+        {"code": f["code"], "at": f["at"], "reason": ACK_REASON}
+        for f in store.findings_of(db, content)
+        if f["severity"] == "WARNING"
+    ]

@@ -434,7 +434,75 @@ def findings_of(db: Session, content: Mapping[str, Any]) -> list[dict[str, Any]]
     problems = check_document("SURVEY", content)
     if problems:
         return [{"code": p.code, "at": p.path, "severity": "BLOCKER", "message": p.detail or p.code} for p in problems]
-    return [f.__dict__ | {"code": f.code} for f in validate(load_bundle(db, content))]
+    bundle = load_bundle(db, content)
+    return [f.__dict__ | {"code": f.code} for f in validate(bundle)] + governed_warnings(bundle)
+
+
+#: FI-2 (owner decision FI2-D-1) — warnings the SERVER governs. Each has a stable code; each must be acknowledged,
+#: with a recorded reason, before a draft can be submitted; the acknowledgement is stored in the immutable candidate
+#: beside the content fingerprint it was given for. A warning never blocks on its own and never makes anything eligible
+#: for a call. Warnings that only the editor raises are advisory and are never recorded here.
+WARNING_CODES = ("SYNTHETIC_WORDING_UNAPPROVED",)
+ACK_REASON_MIN, ACK_REASON_MAX = 10, 500
+
+
+def governed_warnings(bundle: Bundle) -> list[dict[str, Any]]:
+    wordings = [e for e in manifest_of(bundle) if e["kind"] == "WORDING"]
+    if not wordings:
+        return []
+    # Every wording in Call360 today is synthetic and unapproved for operational use (owner decision D-183). Review and
+    # development publication of a candidate are not Compliance approval of insurance wording.
+    return [
+        {
+            "code": "SYNTHETIC_WORDING_UNAPPROVED",
+            "at": str(bundle.survey.get("code")),
+            "severity": "WARNING",
+            "message": (
+                f"The wording in this survey ({len(wordings)} version{'' if len(wordings) == 1 else 's'}) is "
+                "synthetic and not approved for operational use. Reviewing or publishing this survey is not "
+                "Compliance approval of its wording."
+            ),
+        }
+    ]
+
+
+def check_acknowledgements(
+    findings: Sequence[Mapping[str, Any]], given: Sequence[Any], content_sha256: str, actor: Actor
+) -> list[dict[str, Any]]:
+    """The acknowledgements to store with a candidate: exactly one, with a reason, for every server-governed warning of
+    the content being submitted. Anything missing, empty or not asked for refuses the submission."""
+    warnings = {(str(f["code"]), str(f["at"])): f for f in findings if f["severity"] == "WARNING"}
+    seen: dict[tuple[str, str], str] = {}
+    for a in given:
+        if not isinstance(a, Mapping) or not isinstance(a.get("reason"), str):
+            raise SurveyError(422, "ACKNOWLEDGEMENT_INVALID", "An acknowledgement names a warning and gives a reason")
+        key = (str(a.get("code")), str(a.get("at")))
+        if key not in warnings:
+            raise SurveyError(
+                422, "ACKNOWLEDGEMENT_UNKNOWN", "An acknowledgement was given for a warning the server did not raise",
+                [{"code": key[0], "at": key[1]}],
+            )  # fmt: skip
+        seen[key] = a["reason"].strip()
+    missing = [
+        {"code": k[0], "at": k[1], "message": w["message"]}
+        for k, w in warnings.items()
+        if not ACK_REASON_MIN <= len(seen.get(k, "")) <= ACK_REASON_MAX
+    ]
+    if missing:
+        raise SurveyError(
+            422,
+            "ACKNOWLEDGEMENT_REQUIRED",
+            f"{len(missing)} warning(s) need an acknowledgement with a reason of {ACK_REASON_MIN} to {ACK_REASON_MAX} "
+            "characters before submitting",
+            missing,
+        )
+    return [
+        {
+            "code": k[0], "at": k[1], "message": w["message"], "reason": seen[k], "content_sha256": content_sha256,
+            "acknowledged_by": _ref(actor), "acknowledged_by_name": actor.display_name,
+        }
+        for k, w in sorted(warnings.items())
+    ]  # fmt: skip
 
 
 # ---------------- candidates
@@ -446,11 +514,14 @@ def submit(
     survey(db, sid, markets)
     d = draft(db, sid, lock=True)
     content = d["content"]
-    blockers = [f for f in findings_of(db, content) if f["severity"] == "BLOCKER"]
+    findings = findings_of(db, content)
+    blockers = [f for f in findings if f["severity"] == "BLOCKER"]
     if blockers:
         raise SurveyError(
             422, "VALIDATION_BLOCKED", f"{len(blockers)} blocker(s) must be fixed before submitting", blockers
         )
+    # server-governed warnings: each acknowledged with a reason, recorded against THIS content's fingerprint (FI2-D-1)
+    acknowledgements = check_acknowledgements(findings, acknowledgements, sha256_hex(content), actor)
     bundle = load_bundle(db, content)
     manifest = manifest_of(bundle)
     who = _ref(actor)
@@ -491,7 +562,8 @@ def submit(
     rebuild_usage(db, "CANDIDATE", cid, manifest)
     _audit(
         db, actor, meta, "SURVEY.SUBMITTED", "survey_candidate", cid,
-        {"n": n, "content_sha256": sha256_hex(content), "manifest_sha256": manifest_sha256(manifest)},
+        {"n": n, "content_sha256": sha256_hex(content), "manifest_sha256": manifest_sha256(manifest),
+         "acknowledged": [a["code"] for a in acknowledgements]},
     )  # fmt: skip
     return cid
 
@@ -720,6 +792,136 @@ def versions_of(db: Session, sid: uuid.UUID) -> list[dict[str, Any]]:
         "WHERE survey_definition_id = :s ORDER BY version_no",
         s=sid,
     )
+
+
+# ------------------------------------------------------------------------------------ FI-2: what a reviewer is shown
+def _names(db: Session, refs: Iterable[str]) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for r in sorted(set(refs)):
+        row = _one(db, "SELECT display_name FROM principal WHERE CAST(id AS text) = :r", r=r)
+        out[r] = row["display_name"] if row else None
+    return out
+
+
+def restrictions(db: Session, cand: Mapping[str, Any], actor: Actor) -> dict[str, Any]:
+    """What the identity rules allow THIS person to do with this candidate, and why not. Shown to a reviewer so the rule
+    is visible before they try; ``decide``, ``withdraw`` and ``publish`` enforce the same rules whatever is shown, and a
+    permission is needed as well."""
+    who, status = _ref(actor), status_of(db, cand["id"])
+    maker = who == cand["submitted_by"] or who in cand["makers"]
+    approver = approver_of(db, cand["id"])
+    decide_reason = "NOT_IN_REVIEW" if status != "IN_REVIEW" else "SELF_REVIEW_DENIED" if maker else None
+    publish_reason = (
+        "NOT_APPROVED" if status != "APPROVED"
+        else "SELF_PUBLISH_DENIED" if maker
+        else "APPROVER_PUBLISH_DENIED" if who == approver
+        else None
+    )  # fmt: skip
+    withdraw_reason = (
+        "NOT_OPEN" if status not in OPEN_CANDIDATE else None if who == cand["submitted_by"] else "NOT_SUBMITTER"
+    )
+    return {
+        "is_maker": maker, "is_approver": approver is not None and who == approver,
+        "can_decide": decide_reason is None, "decide_reason": decide_reason,
+        "can_publish": publish_reason is None, "publish_reason": publish_reason,
+        "can_withdraw": withdraw_reason is None, "withdraw_reason": withdraw_reason,
+    }  # fmt: skip
+
+
+def candidate_documents(db: Session, cand: Mapping[str, Any], actor: Actor) -> dict[str, Any]:
+    """Everything a reviewer inspects: the frozen content, the full document of every pinned version with the hash the
+    manifest pins and whether the stored document still has it, who made the candidate, what was acknowledged, the
+    server's validation of this exact content, and what the identity rules allow the reader. Read-only."""
+    assets = []
+    for e in cand["manifest"]:
+        row = _one(
+            db,
+            "SELECT state, sha256, content FROM survey_asset_version WHERE kind = :k AND code = :c AND version = :v",
+            k=e["kind"], c=e["code"], v=e["version"],
+        )  # fmt: skip
+        intact = bool(row) and row is not None and row["state"] == "FROZEN" and row["sha256"] == e["sha256"]
+        intact = intact and row is not None and sha256_hex(row["content"]) == e["sha256"]
+        assets.append(
+            {
+                "kind": e["kind"], "code": e["code"], "version": e["version"], "sha256": e["sha256"],
+                "intact": intact, "document": row["content"] if row else None,
+            }
+        )  # fmt: skip
+    approver = approver_of(db, cand["id"])
+    names = _names(db, [*cand["makers"], cand["submitted_by"], *([approver] if approver else [])])
+    problems = manifest_problems(db, cand)
+    findings = findings_of(db, cand["content"])
+    v = _one(db, "SELECT id, label FROM survey_version WHERE candidate_id = :c", c=cand["id"])
+    return {
+        "id": cand["id"], "survey_id": cand["survey_definition_id"], "survey_code": cand["survey_code"],
+        "n": cand["n"], "status": status_of(db, cand["id"]) or "UNKNOWN", "draft_revision": cand["draft_revision"],
+        "note": cand["note"], "submitted_at": cand["submitted_at"],
+        "submitted_by": {"ref": cand["submitted_by"], "name": names.get(cand["submitted_by"])},
+        "makers": [{"ref": m, "name": names.get(m)} for m in sorted(set(cand["makers"]) | {cand["submitted_by"]})],
+        "approver": {"ref": approver, "name": names.get(approver)} if approver else None,
+        "content": cand["content"], "content_sha256": cand["content_sha256"],
+        "manifest_sha256": cand["manifest_sha256"], "manifest_intact": not problems, "manifest_problems": problems,
+        "assets": assets, "acknowledgements": list(cand["acknowledgements"] or []),
+        "validation": {
+            "blockers": sum(f["severity"] == "BLOCKER" for f in findings),
+            "warnings": sum(f["severity"] == "WARNING" for f in findings),
+            "findings": [{k: f[k] for k in ("code", "at", "severity", "message")} for f in findings],
+        },
+        "restrictions": restrictions(db, cand, actor),
+        "version_id": v["id"] if v else None, "version_label": v["label"] if v else None,
+    }  # fmt: skip
+
+
+def survey_history(db: Session, sid: uuid.UUID) -> dict[str, Any]:
+    """Every candidate and every version of a survey, oldest first, with the status derived from its events."""
+    cands = _all(
+        db,
+        "SELECT id, n, draft_revision, content_sha256, manifest_sha256, note, makers, submitted_by, submitted_at "
+        "FROM survey_candidate WHERE survey_definition_id = :s ORDER BY n",
+        s=sid,
+    )
+    vers = _all(
+        db,
+        "SELECT v.id, v.version_no, v.label, v.candidate_id, v.created_at, v.created_by, c.n AS candidate_n, "
+        "c.content_sha256 FROM survey_version v JOIN survey_candidate c ON c.id = v.candidate_id "
+        "WHERE v.survey_definition_id = :s ORDER BY v.version_no",
+        s=sid,
+    )
+    names = _names(db, [c["submitted_by"] for c in cands] + [v["created_by"] for v in vers])
+    last = {
+        c["id"]: _one(
+            db,
+            "SELECT e.event, e.reason, e.occurred_at, p.display_name FROM survey_lifecycle_event e "
+            "LEFT JOIN principal p ON CAST(p.id AS text) = e.actor_ref "
+            "WHERE e.subject_id = :s ORDER BY e.seq DESC LIMIT 1",
+            s=c["id"],
+        )
+        or {}
+        for c in cands
+    }
+    return {
+        "candidates": [
+            {
+                "id": c["id"], "n": c["n"], "status": status_of(db, c["id"]) or "UNKNOWN",
+                "draft_revision": c["draft_revision"], "content_sha256": c["content_sha256"],
+                "manifest_sha256": c["manifest_sha256"], "note": c["note"],
+                "submitted_by": names.get(c["submitted_by"]), "submitted_at": c["submitted_at"],
+                "makers": len(set(c["makers"]) | {c["submitted_by"]}),
+                "last_event": last[c["id"]].get("event"), "last_event_by": last[c["id"]].get("display_name"),
+                "last_event_at": last[c["id"]].get("occurred_at"), "last_event_reason": last[c["id"]].get("reason"),
+            }
+            for c in cands
+        ],
+        "versions": [
+            {
+                "id": v["id"], "version_no": v["version_no"], "label": v["label"],
+                "status": status_of(db, v["id"]) or "UNKNOWN", "candidate_id": v["candidate_id"],
+                "candidate_n": v["candidate_n"], "content_sha256": v["content_sha256"],
+                "published_by": names.get(v["created_by"]), "published_at": v["created_at"],
+            }
+            for v in vers
+        ],
+    }  # fmt: skip
 
 
 # ------------------------------------------------------------------------------------------------- derived usage index

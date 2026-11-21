@@ -26,7 +26,7 @@ from app.domain.survey.documents import check_document
 from app.domain.survey.validator import validate
 from tests.support import make_account
 from tests.survey_support import fixture_bundle, namespaced, new_code, operations_for
-from tests.test_survey_api import ALL, GRANTS, MARKETS, _client, make_survey, post, survey_app, trio  # noqa: F401
+from tests.test_survey_api import ALL, GRANTS, MARKETS, _client, make_survey, post, submit, survey_app, trio  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -168,7 +168,7 @@ def test_a_save_that_fails_part_way_changes_nothing_at_all(trio: Any, db: Sessio
 def test_a_save_cannot_change_a_frozen_version_and_is_refused_whole(trio: Any, db: Session) -> None:
     author, checker = trio[0], trio[1]
     sid, code = make_survey(author, "K1")
-    cid = post(author, f"/api/v1/survey-definitions/{sid}/candidates").json()["id"]  # freezes what the draft pins
+    cid = submit(author, sid).json()["id"]  # freezes what the draft pins
     assert post(checker, f"/api/v1/survey-candidates/{cid}/decision", {"verdict": "APPROVE"}).status_code == 200
     docs = author.get(f"/api/v1/survey-definitions/{sid}/draft/documents").json()
     assert {a["state"] for a in docs["assets"]} == {"FROZEN"}

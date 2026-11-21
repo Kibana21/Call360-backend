@@ -54,6 +54,8 @@ MATRIX = {
     ("POST", "/api/v1/survey-definitions/{survey_id}/draft/validate"): "survey.edit",
     ("GET", "/api/v1/survey-definitions/{survey_id}/draft/documents"): "survey.read",  # FI-1
     ("POST", "/api/v1/survey-definitions/{survey_id}/draft/save"): "survey.edit",  # FI-1
+    ("GET", "/api/v1/survey-definitions/{survey_id}/history"): "survey.read",  # FI-2
+    ("GET", "/api/v1/survey-candidates/{candidate_id}/documents"): "survey.read",  # FI-2
     ("POST", "/api/v1/survey-definitions/{survey_id}/candidates"): "survey.edit",
     ("GET", "/api/v1/survey-candidates/{candidate_id}"): "survey.read",
     ("POST", "/api/v1/survey-candidates/{candidate_id}/decision"): "survey.approve",
@@ -113,6 +115,17 @@ def post(c: TestClient, path: str, body: dict[str, Any] | None = None) -> Any:
     return c.post(path, json=body or {}, headers=csrf_header(c))
 
 
+def submit(c: TestClient, sid: str, note: str = "") -> Any:
+    """Submit the saved draft, acknowledging every server-governed warning with a reason (FI-2)."""
+    findings = post(c, f"/api/v1/survey-definitions/{sid}/draft/validate").json().get("findings", [])
+    acks = [
+        {"code": f["code"], "at": f["at"], "reason": "Synthetic test content; acknowledged."}
+        for f in findings
+        if f["severity"] == "WARNING"
+    ]
+    return post(c, f"/api/v1/survey-definitions/{sid}/candidates", {"note": note, "acknowledgements": acks})
+
+
 def make_survey(c: TestClient, prefix: str = "K1") -> tuple[str, str]:
     code = new_code()
     r = post(c, "/api/v1/survey-definitions", {"code": code, "name": f"Test {code}", "purpose": "synthetic"})
@@ -151,7 +164,7 @@ def test_enabling_the_setting_adds_exactly_seventeen_operations_and_changes_no_o
         return {(m.upper(), p) for p, ops in a.openapi()["paths"].items() for m in ops}
 
     added = routes(survey_app) - routes(app)
-    assert added == set(MATRIX) and len(added) == 17  # fifteen of SS-03A, two of FI-1
+    assert added == set(MATRIX) and len(added) == 19  # fifteen of SS-03A, two of FI-1, two of FI-2
     assert routes(app) <= routes(survey_app)  # every existing route is still there
     # nothing that speaks, dials or runs a call is among them: no live-call workflow is enabled by this setting
     assert not [p for _, p in added if any(w in p for w in ("voice", "call", "session", "run", "plan", "assign"))]
@@ -248,9 +261,10 @@ def test_draft_candidate_approval_and_publication_through_the_api(trio: Any, db:
     draft = author.get(f"/api/v1/survey-definitions/{sid}/draft").json()
     assert draft["revision"] == 10 and {a["state"] for a in draft["assets"]} == {"DRAFT"} and len(draft["assets"]) == 9
     v = post(author, f"/api/v1/survey-definitions/{sid}/draft/validate").json()
-    assert (v["blockers"], v["findings"]) == (0, [])
+    # no blocker; one server-governed warning, which must be acknowledged at submission (FI-2)
+    assert (v["blockers"], [f["code"] for f in v["findings"]]) == (0, ["SYNTHETIC_WORDING_UNAPPROVED"])
 
-    r = post(author, f"/api/v1/survey-definitions/{sid}/candidates", {"note": "please review"})
+    r = submit(author, sid, "please review")
     assert r.status_code == 201, r.text
     cand = r.json()
     cid = cand["id"]
@@ -318,8 +332,10 @@ def test_blockers_and_malformed_requests_have_explicit_codes(trio: Any) -> None:
     author = trio[0]
     sid, _ = make_survey(author, "K5")  # wording with variables, and no field is allowlisted for speech
     v = post(author, f"/api/v1/survey-definitions/{sid}/draft/validate").json()
-    assert v["blockers"] == 5 and {f["code"] for f in v["findings"]} == {"VARIABLE_NOT_PERMITTED"}
-    r = post(author, f"/api/v1/survey-definitions/{sid}/candidates")
+    assert v["blockers"] == 5
+    assert {f["code"] for f in v["findings"] if f["severity"] == "BLOCKER"} == {"VARIABLE_NOT_PERMITTED"}
+    assert [f["code"] for f in v["findings"] if f["severity"] == "WARNING"] == ["SYNTHETIC_WORDING_UNAPPROVED"]
+    r = submit(author, sid)
     assert (r.status_code, r.json()["code"]) == (422, "VALIDATION_BLOCKED")
     assert {d["code"] for d in r.json()["details"]} == {"VARIABLE_NOT_PERMITTED"}
     rev = author.get(f"/api/v1/survey-definitions/{sid}/draft").json()["revision"]
@@ -396,12 +412,12 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
         if m in ("get", "post", "put", "patch", "delete")
     }
     assert set(MATRIX) <= ops
-    assert len([o for o in ops if is_survey_path(o[1])]) == 17
-    assert len(ops) == 199 + 17  # the 199 operations of the accepted contract, and these
+    assert len([o for o in ops if is_survey_path(o[1])]) == 19
+    assert len(ops) == 199 + 19  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
     assert not [k for k in schemas if "__" in k]
     survey_schemas = [k for k in schemas if k.startswith("Survey") and k not in ("SurveyRunDetail",)]
-    assert len(survey_schemas) == 26 and len(schemas) == 405 + 26  # 22 of SS-03A, 4 of FI-1
+    assert len(survey_schemas) == 35 and len(schemas) == 405 + 35  # 22 of SS-03A, 4 of FI-1, 9 of FI-2
     assert MIGRATION_HEAD == "0027_survey_definitions"

@@ -25,6 +25,11 @@ SG = (
     ("E2E_SURVEY_AUTHOR", "E2E survey author", "E2E_SURVEY_AUTHOR_SG", "e2e.survey.author", "E2E Survey Author", EDIT),
     ("E2E_SURVEY_AUTHOR", "E2E survey author", "E2E_SURVEY_AUTHOR2_SG", "e2e.survey.second", "E2E Second Author", EDIT),
     ("E2E_SURVEY_READER", "E2E survey reader", "E2E_SURVEY_READER_SG", "e2e.survey.reader", "E2E Survey Reader", ("survey.read",)),
+    # FI-2: a checker and a publisher who each hold only their own part, like the development identities
+    ("E2E_SURVEY_CHECKER", "E2E survey checker", "E2E_SURVEY_CHECKER_SG", "e2e.survey.checker", "E2E Survey Checker", ("survey.read", "survey.approve")),
+    ("E2E_SURVEY_PUBLISHER", "E2E survey publisher", "E2E_SURVEY_PUBLISHER_SG", "e2e.survey.publisher", "E2E Survey Publisher", ("survey.read", "survey.publish")),
+    # FI-2: one person holding ALL FOUR permissions, to show that the identity rules stop them where no permission does
+    ("E2E_SURVEY_ALL", "E2E every survey permission", "E2E_SURVEY_ALL_SG", "e2e.survey.everything", "E2E Every Permission", ("survey.read", "survey.edit", "survey.approve", "survey.publish")),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (

@@ -1,6 +1,7 @@
 """SS-03A.3 — survey definition API: drafts, immutable candidates, published versions, the library and condition
-evaluation. Seventeen operations under ``/api/v1``, with "survey" vocabulary (owner decision D-166): the fifteen of
-SS-03A, and the draft-documents read and the atomic save of FI-1.
+evaluation. Nineteen operations under ``/api/v1``, with "survey" vocabulary (owner decision D-166): the fifteen of
+SS-03A; the draft-documents read and the atomic save of FI-1; the survey history and the candidate-documents read of
+FI-2.
 
 Registered ONLY when the server setting ``survey_definitions_enabled`` is on; it is off by default. The path is
 ``/survey-definitions``: the bare plural of "survey" is a legacy route name retired by ADR-0007 and is deliberately
@@ -175,6 +176,114 @@ class SurveyCandidateOut(BaseModel):
     submitted_by: str
     submitted_at: datetime
     history: list[SurveyLifecycleEvent]
+
+
+class SurveyPerson(BaseModel):
+    ref: str
+    name: str | None
+
+
+class SurveyCandidateAsset(BaseModel):
+    kind: str
+    code: str
+    version: int
+    sha256: str = Field(description="The hash the candidate's manifest pins.")
+    intact: bool = Field(description="True when the stored, frozen document still has exactly that hash.")
+    document: dict[str, Any] | None
+
+
+class SurveyAcknowledgement(BaseModel):
+    code: str
+    at: str
+    message: str
+    reason: str
+    content_sha256: str
+    acknowledged_by: str
+    acknowledged_by_name: str | None
+
+
+class SurveyCandidateValidation(BaseModel):
+    blockers: int
+    warnings: int
+    findings: list[SurveyFindingOut]
+
+
+class SurveyCandidateRestrictions(BaseModel):
+    is_maker: bool
+    is_approver: bool
+    can_decide: bool
+    decide_reason: str | None
+    can_publish: bool
+    publish_reason: str | None
+    can_withdraw: bool
+    withdraw_reason: str | None
+
+
+class SurveyCandidateDocumentsOut(BaseModel):
+    id: uuid.UUID
+    survey_id: uuid.UUID
+    survey_code: str
+    n: int
+    status: str
+    draft_revision: int
+    note: str
+    submitted_at: datetime
+    submitted_by: SurveyPerson
+    makers: list[SurveyPerson]
+    approver: SurveyPerson | None
+    content: dict[str, Any]
+    content_sha256: str
+    manifest_sha256: str
+    manifest_intact: bool
+    manifest_problems: list[str]
+    assets: list[SurveyCandidateAsset]
+    acknowledgements: list[SurveyAcknowledgement]
+    validation: SurveyCandidateValidation
+    restrictions: SurveyCandidateRestrictions
+    version_id: uuid.UUID | None
+    version_label: str | None
+    history: list[SurveyLifecycleEvent]
+    note_standing: str = NOTE
+
+
+class SurveyHistoryCandidate(BaseModel):
+    id: uuid.UUID
+    n: int
+    status: str
+    draft_revision: int
+    content_sha256: str
+    manifest_sha256: str
+    note: str
+    submitted_by: str | None
+    submitted_at: datetime
+    makers: int
+    last_event: str | None
+    last_event_by: str | None
+    last_event_at: datetime | None
+    last_event_reason: str | None
+
+
+class SurveyHistoryVersion(BaseModel):
+    id: uuid.UUID
+    version_no: int
+    label: str
+    status: str
+    candidate_id: uuid.UUID
+    candidate_n: int
+    content_sha256: str
+    published_by: str | None
+    published_at: datetime
+
+
+class SurveyHistoryOut(BaseModel):
+    survey_id: uuid.UUID
+    code: str
+    name: str
+    draft_revision: int
+    draft_content_sha256: str
+    candidates: list[SurveyHistoryCandidate]
+    versions: list[SurveyHistoryVersion]
+    note: str = NOTE
 
 
 class SurveyDecisionIn(BaseModel):
@@ -554,6 +663,48 @@ def survey_candidate_get(
         return _candidate_out(db, store.candidate(db, candidate_id, _markets(auth)))
     except store.SurveyError as exc:
         raise _err(exc) from exc
+
+
+@router.get(
+    "/survey-definitions/{survey_id}/history",
+    response_model=SurveyHistoryOut,
+    operation_id="survey_definition_history",
+    responses=_ERR,
+)
+def survey_definition_history(
+    survey_id: uuid.UUID, auth: AuthContext = Depends(require(READ)), db: Session = Depends(get_db)
+) -> SurveyHistoryOut:
+    """FI-2 — every candidate and every published version of a survey, oldest first, with derived status."""
+    try:
+        row = store.survey(db, survey_id, _markets(auth))
+    except store.SurveyError as exc:
+        raise _err(exc) from exc
+    d = store.draft(db, survey_id)
+    return SurveyHistoryOut(
+        survey_id=row["id"], code=row["code"], name=row["name"], draft_revision=d["revision"],
+        draft_content_sha256=sha256_hex(d["content"]), **store.survey_history(db, survey_id),
+    )  # fmt: skip
+
+
+@router.get(
+    "/survey-candidates/{candidate_id}/documents",
+    response_model=SurveyCandidateDocumentsOut,
+    operation_id="survey_candidate_documents",
+    responses=_ERR,
+)
+def survey_candidate_documents(
+    candidate_id: uuid.UUID, auth: AuthContext = Depends(require(READ)), db: Session = Depends(get_db)
+) -> SurveyCandidateDocumentsOut:
+    """FI-2 — what a reviewer inspects: the frozen content and every pinned document with its hash and integrity, the
+    makers, the recorded acknowledgements, the server's validation of exactly this content, and what the identity rules
+    allow the reader. Read-only: a candidate is never changed."""
+    try:
+        cand = store.candidate(db, candidate_id, _markets(auth))
+    except store.SurveyError as exc:
+        raise _err(exc) from exc
+    return SurveyCandidateDocumentsOut(
+        **store.candidate_documents(db, cand, auth.actor), history=_events(db, cand["id"])
+    )
 
 
 def _decided(db: Session, candidate_id: uuid.UUID, auth: AuthContext) -> SurveyCandidateOut:

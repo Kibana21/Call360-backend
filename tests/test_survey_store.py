@@ -22,7 +22,7 @@ from app.domain.survey import store
 from app.domain.survey.canonical import sha256_hex
 from app.domain.survey.store import SurveyError
 from tests.support import Account, make_account, migrate
-from tests.survey_support import MARKETS, actor_of, build_draft, fixture_bundle
+from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
 HEAD, BEFORE = "0027_survey_definitions", "0026_gpt_live_provider"
 SURVEY_TABLES = {
@@ -54,7 +54,7 @@ def _published(
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     author, checker, publisher = people
     sid, _ = build_draft(db, author, prefix)
-    cid = store.submit(db, sid, MARKETS, "first", [], actor_of(author))
+    cid = store.submit(db, sid, MARKETS, "first", acks_for(db, sid), actor_of(author))
     store.decide(db, cid, MARKETS, "APPROVE", "ok", actor_of(checker))
     vid = store.publish(db, cid, MARKETS, None, actor_of(publisher))
     db.commit()
@@ -212,7 +212,7 @@ def test_blockers_prevent_submission_and_freeze_nothing(db: Session, people: tup
     author = people[0]
     sid, _ = build_draft(db, author, "K5")  # wording with variables: no field is allowlisted for speech
     with pytest.raises(SurveyError) as e:
-        store.submit(db, sid, MARKETS, "", [], actor_of(author))
+        store.submit(db, sid, MARKETS, "", acks_for(db, sid), actor_of(author))
     assert (e.value.status, e.value.code) == (422, "VALIDATION_BLOCKED")
     assert {d["code"] for d in e.value.details or []} == {"VARIABLE_NOT_PERMITTED"}
     db.rollback()
@@ -231,7 +231,7 @@ def test_submission_freezes_the_assets_and_inserts_an_immutable_candidate(
     author = people[0]
     sid, sfx = build_draft(db, author, "K7")
     d = store.draft(db, sid)
-    cid = store.submit(db, sid, MARKETS, "please review", [], actor_of(author))
+    cid = store.submit(db, sid, MARKETS, "please review", acks_for(db, sid), actor_of(author))
     db.commit()
     cand = store.candidate(db, cid, MARKETS)
     assert (cand["n"], cand["draft_revision"], cand["submitted_by"]) == (1, d["revision"], str(author.principal_id))
@@ -304,7 +304,7 @@ def test_approval_and_publication_need_different_people_whatever_they_are_permit
 ) -> None:
     author, checker, publisher = people
     sid, _ = build_draft(db, author, "K1")
-    cid = store.submit(db, sid, MARKETS, "", [], actor_of(author))
+    cid = store.submit(db, sid, MARKETS, "", acks_for(db, sid), actor_of(author))
     db.commit()
     with pytest.raises(SurveyError) as e:  # a maker cannot decide the candidate
         store.decide(db, cid, MARKETS, "APPROVE", "", actor_of(author))
@@ -349,7 +349,7 @@ def test_the_database_enforces_the_identity_rules_and_transitions_without_the_se
 ) -> None:
     author, checker, publisher = people
     sid, _ = build_draft(db, author, "K1")
-    cid = store.submit(db, sid, MARKETS, "", [], actor_of(author))
+    cid = store.submit(db, sid, MARKETS, "", acks_for(db, sid), actor_of(author))
     db.commit()
     ins = (
         "INSERT INTO survey_lifecycle_event (id, subject_type, subject_id, survey_definition_id, event, actor_ref) "
@@ -398,14 +398,14 @@ def test_a_changed_draft_supersedes_and_an_old_approval_cannot_be_used(
 ) -> None:
     author, checker, publisher = people
     sid, _ = build_draft(db, author, "K1")
-    c1 = store.submit(db, sid, MARKETS, "", [], actor_of(author))
+    c1 = store.submit(db, sid, MARKETS, "", acks_for(db, sid), actor_of(author))
     store.decide(db, c1, MARKETS, "APPROVE", "", actor_of(checker))
     db.commit()
     d = store.draft(db, sid)
     store.apply_operation(
         db, sid, MARKETS, d["revision"], {"op": "SET_CONTENT", "content": d["content"]}, actor_of(author)
     )
-    c2 = store.submit(db, sid, MARKETS, "again", [], actor_of(author))
+    c2 = store.submit(db, sid, MARKETS, "again", acks_for(db, sid), actor_of(author))
     db.commit()
     assert store.status_of(db, c1) == "SUPERSEDED" and _events(db, c1) == ["SUBMITTED", "APPROVED", "SUPERSEDED"]
     assert store.status_of(db, c2) == "IN_REVIEW" and store.candidate(db, c2, MARKETS)["n"] == 2
@@ -434,7 +434,7 @@ def test_a_new_version_supersedes_the_previous_one_in_the_history_only(
     store.apply_operation(
         db, sid, MARKETS, d["revision"], {"op": "SET_CONTENT", "content": d["content"]}, actor_of(author)
     )
-    c2 = store.submit(db, sid, MARKETS, "", [], actor_of(author))
+    c2 = store.submit(db, sid, MARKETS, "", acks_for(db, sid), actor_of(author))
     store.decide(db, c2, MARKETS, "APPROVE", "", actor_of(checker))
     v2 = store.publish(db, c2, MARKETS, None, actor_of(publisher))
     db.commit()
@@ -451,7 +451,7 @@ def test_tampering_with_a_manifest_is_detected_and_refused(
 ) -> None:
     author, checker, publisher = people
     sid, _ = build_draft(db, author, "K1")
-    good = store.submit(db, sid, MARKETS, "", [], actor_of(author))
+    good = store.submit(db, sid, MARKETS, "", acks_for(db, sid), actor_of(author))
     db.commit()
     real = store.candidate(db, good, MARKETS)
 
