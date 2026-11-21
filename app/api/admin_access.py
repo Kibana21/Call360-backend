@@ -716,8 +716,15 @@ def system_health(
         HealthCheck(
             code="MIGRATIONS",
             label="Migrations",
-            status="OK" if head == expected else "FAIL",
-            detail=f"At {head}" if head == expected else f"At {head}; expected {expected}",
+            status="OK" if head in request.app.state.acceptable_migration_heads else "FAIL",
+            detail=f"At {head}"
+            if head == expected
+            else f"At {head}; expected {expected}"
+            + (
+                " (accepted: the missing revision only adds survey-definition tables, and that setting is off)"
+                if head in request.app.state.acceptable_migration_heads
+                else ""
+            ),
         ),
         HealthCheck(
             code="DATA_POLICY",

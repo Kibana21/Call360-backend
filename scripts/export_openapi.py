@@ -24,6 +24,9 @@ def render() -> str:
         expected_db_role="openapi",
         refresh_token_pepper="openapi-export",  # noqa: S106 — fixed non-secret; no DB/tokens used
         csrf_secret="openapi-export",  # noqa: S106 — fixed non-secret placeholder
+        # SS-03A: the contract documents the survey-definition operations so the client is typed for them. A running
+        # server registers them only when this setting is on, and it is OFF by default.
+        survey_definitions_enabled=True,
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

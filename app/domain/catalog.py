@@ -101,6 +101,18 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
         "lab_transcript",
         "lab_trial",
     ),
+    # SS-03A survey definition foundation: additive; unused while `survey_definitions_enabled` is off
+    "0027_survey_definitions": (
+        "survey_definition",
+        "survey_draft",
+        "survey_asset_version",
+        "survey_candidate",
+        "survey_version",
+        "survey_lifecycle_event",
+        "survey_wording_approval",
+        "survey_asset_usage",
+        "survey_catalog_entry",
+    ),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 

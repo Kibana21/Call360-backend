@@ -33,6 +33,7 @@ from app.api import (
     scripts,
     search,
     simulation_workbench,
+    survey_definitions,
     voice,
     voice_lab,
 )
@@ -87,7 +88,19 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0026_gpt_live_provider"
+MIGRATION_HEAD = "0027_survey_definitions"
+#: Revision 0027 (SS-03A) only ADDS tables that are used when `survey_definitions_enabled` is on. A schema still at the
+#: revision before it therefore serves the whole existing product correctly while that setting is off, and is accepted
+#: in that case only. With the setting on, the schema must be at the head.
+HEAD_BEFORE_SURVEY_DEFINITIONS = "0026_gpt_live_provider"
+
+
+def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
+    if settings.survey_definitions_enabled:
+        return (MIGRATION_HEAD,)
+    return (MIGRATION_HEAD, HEAD_BEFORE_SURVEY_DEFINITIONS)
+
+
 ROUTERS = (
     health.router,
     auth.router,
@@ -149,6 +162,7 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
     app.state.cookies = cookie_names(settings)
     app.state.limiter = SlidingWindowLimiter()
     app.state.expected_migration_head = MIGRATION_HEAD
+    app.state.acceptable_migration_heads = acceptable_migration_heads(settings)
     if with_database:
         app.state.engine = make_engine(settings)
         app.state.session_factory = make_session_factory(app.state.engine)
@@ -158,6 +172,9 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
     install_log_redaction()
     for router in ROUTERS:
         app.include_router(router)
+    if settings.survey_definitions_enabled:
+        # SS-03A: off by default. With it off the survey routes do not exist and nothing touches the survey_* tables.
+        app.include_router(survey_definitions.router)
     return app
 
 

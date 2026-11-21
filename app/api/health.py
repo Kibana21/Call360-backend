@@ -34,7 +34,7 @@ def ready(request: Request) -> HealthResponse | JSONResponse:
         with request.app.state.engine.connect() as conn:
             verify_connection(conn, settings)
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            if version != request.app.state.expected_migration_head or settings.data_policy != "SYNTHETIC_ONLY":
+            if version not in request.app.state.acceptable_migration_heads or settings.data_policy != "SYNTHETIC_ONLY":
                 raise UnsafeDatabaseTarget("not at migration head")
             protection_for(conn, settings)  # D-34: keys present whenever the CP0.2 domain is
             # INV-10 / GOV-001: under SYNTHETIC_ONLY no business row may be non-synthetic (ADR-0008 §6).

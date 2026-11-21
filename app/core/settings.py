@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # values: model probabilities are not calibrated compliance-confidence scores, and nothing is ever certified.
     transcription_model_dir: Path | None = None
     transcription_worker: bool = True
+    # SS-03A: the survey definition foundation (routes under /api/v1/survey-definitions…). OFF by default: with it off
+    # no survey route is registered and nothing reads or writes the survey_* tables. No live-call workflow is behind it.
+    survey_definitions_enabled: bool = False
+    survey_writes_per_minute: int = 240
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

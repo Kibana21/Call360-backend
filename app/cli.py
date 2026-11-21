@@ -29,7 +29,7 @@ from app.db.session import make_engine, make_session_factory
 from app.domain.digest import content_digest
 from app.domain.protection import DataProtection, DataProtectionUnavailable
 from app.domain.seed import SeedError, counts, seed
-from app.main import MIGRATION_HEAD
+from app.main import MIGRATION_HEAD, acceptable_migration_heads
 from app.security.identity import AccountError, active_admin_count, create_local_account
 from app.security.passwords import PasswordPolicyError
 from app.security.tokens import generate_keypair
@@ -117,7 +117,7 @@ def _seed_target(args: argparse.Namespace):  # type: ignore[no-untyped-def]
     with engine.connect() as conn:
         verify_connection(conn, settings)
         head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    if head != MIGRATION_HEAD:
+    if head not in acceptable_migration_heads(settings):
         raise SystemExit(f"Refusing: schema is at {head}, expected {MIGRATION_HEAD} (run migrations first).")
     return settings, engine
 
@@ -243,7 +243,7 @@ def cmd_review_fixture(args: argparse.Namespace) -> int:
     _, factory = _session(args.env_file)
     with factory() as db:
         head = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        if head != MIGRATION_HEAD:
+        if head not in acceptable_migration_heads(settings):
             raise SystemExit(f"Refusing: schema is at {head}, expected {MIGRATION_HEAD}")
         try:
             out = review_fixtures.build(db, args.case, _json.loads(args.answers) if args.answers else {})
