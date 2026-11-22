@@ -152,6 +152,8 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
         "survey_obligation_observation",
         "survey_obligation_finding",
     ),
+    # EVAL-2B execution-assurance results of simulated journeys: additive
+    "0035_survey_execution_assurance": ("survey_execution_assurance", "survey_execution_assurance_survey"),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 

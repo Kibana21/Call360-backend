@@ -1159,7 +1159,7 @@ def test_zz_migration_0033_goes_down_and_up_and_changes_nothing_else(
 
     full = state()
     assert set(EVALUATION_TABLES) <= full[0] and full[1:] == (
-        "0034_survey_control_policy",
+        "0035_survey_execution_assurance",
         2,
         0,
     )  # granted to nobody
@@ -1175,6 +1175,8 @@ def test_zz_migration_0033_goes_down_and_up_and_changes_nothing_else(
             "survey_obligation_result",
             "survey_obligation_observation",
             "survey_obligation_finding",
+            "survey_execution_assurance",
+            "survey_execution_assurance_survey",
         },
         "0032_survey_coordinated_sim",
         0,

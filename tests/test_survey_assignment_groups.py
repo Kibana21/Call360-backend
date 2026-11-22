@@ -783,6 +783,8 @@ def test_zz_migration_0031_goes_down_and_up_empty_and_refuses_while_a_governed_g
             "survey_obligation_result",
             "survey_obligation_observation",
             "survey_obligation_finding",
+            "survey_execution_assurance",
+            "survey_execution_assurance_survey",
         },  # EVAL-1 (0033) goes down with it
         "0030_survey_assignment",
     )

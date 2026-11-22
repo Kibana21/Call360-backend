@@ -389,6 +389,7 @@ def test_simulation_records_are_isolated_append_only_audited_and_never_operation
         "survey_coordinated_simulation_step",
         # EVAL-1: the evaluation of a simulated journey and its evidence observations (record_class SIMULATION too)
         "survey_journey_evaluation", "survey_evidence_observation", "survey_obligation_observation",  # EVAL-2A likewise
+        "survey_execution_assurance", "survey_execution_assurance_survey",  # EVAL-2B: the assurance of a simulated journey
     }  # fmt: skip
     columns = set(
         db.execute(

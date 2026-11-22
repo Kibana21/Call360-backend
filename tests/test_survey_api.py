@@ -52,6 +52,7 @@ def is_survey_path(path: str) -> bool:
 #: The permissions matrix of SS-03A: every operation, the one permission it needs, and whether it changes state.
 MATRIX = {
     ("POST", "/api/v1/survey-definitions"): "survey.edit",
+    ("GET", "/api/v1/survey-definitions/workspace"): "survey.read",  # UX-HOME-1: read-only summary
     ("GET", "/api/v1/survey-definitions"): "survey.read",
     ("GET", "/api/v1/survey-definitions/{survey_id}"): "survey.read",
     ("GET", "/api/v1/survey-definitions/{survey_id}/draft"): "survey.read",
@@ -175,7 +176,7 @@ def test_enabling_the_setting_adds_exactly_seventeen_operations_and_changes_no_o
         return {(m.upper(), p) for p, ops in a.openapi()["paths"].items() for m in ops}
 
     added = routes(survey_app) - routes(app)
-    assert added == set(MATRIX) and len(added) == 19  # fifteen of SS-03A, two of FI-1, two of FI-2
+    assert added == set(MATRIX) and len(added) == 20  # fifteen of SS-03A, two of FI-1, two of FI-2, one of UX-HOME-1
     assert routes(app) <= routes(survey_app)  # every existing route is still there
     # nothing that speaks, dials or runs a call is among them: no live-call workflow is enabled by this setting
     assert not [p for _, p in added if any(w in p for w in ("voice", "call", "session", "run", "plan", "assign"))]
@@ -429,8 +430,11 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 3 more with coordinated simulation's (ASG-2B)
     # … and 10 more with evaluation's (EVAL-1)
     # … and 10 more with control policies' (EVAL-2A)
-    assert len([o for o in ops if is_survey_path(o[1])]) == 67
-    assert len(ops) == 199 + 67  # the 199 operations of the accepted contract, and these
+    # … and 3 more with execution assurance's (EVAL-2B)
+    # … and 1 read-only journey trace (E2E-1)
+    # … and 1 read-only workspace summary (UX-HOME-1)
+    assert len([o for o in ops if is_survey_path(o[1])]) == 72
+    assert len(ops) == 199 + 72  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
@@ -442,5 +446,8 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 2 of ASG-2B
     # … and 13 of EVAL-1
     # … and 15 of EVAL-2A
-    assert len(survey_schemas) == 100 and len(schemas) == 405 + 100
-    assert MIGRATION_HEAD == "0034_survey_control_policy"
+    # … and 4 of EVAL-2B
+    # … and 2 of E2E-1
+    # … and 1 of UX-HOME-1
+    assert len(survey_schemas) == 107 and len(schemas) == 405 + 107
+    assert MIGRATION_HEAD == "0035_survey_execution_assurance"

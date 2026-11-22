@@ -774,6 +774,7 @@ def test_zz_migration_0030_goes_down_and_up_empty_and_refuses_while_a_governed_b
                 "survey_evidence",
                 "survey_evaluation",
                 "survey_obligation",
+                "survey_execution",
             )
         )
     } and down[1:] == ("0029_survey_simulation", 0, 0)

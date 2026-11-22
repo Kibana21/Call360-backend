@@ -39,6 +39,8 @@ from app.api import (
     survey_coordinated_simulations,
     survey_definitions,
     survey_evaluations,
+    survey_execution_assurance,
+    survey_journey_trace,
     survey_simulations,
     voice,
     voice_lab,
@@ -94,8 +96,8 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0034_survey_control_policy"
-#: Each of the last eight revisions only ADDS objects that are used when its own setting is on. A schema behind the
+MIGRATION_HEAD = "0035_survey_execution_assurance"
+#: Each of the last nine revisions only ADDS objects that are used when its own setting is on. A schema behind the
 #: head therefore serves everything that is switched on correctly, and is accepted in exactly that case:
 #:   0027 (SS-03A, survey definitions)        — needed when `survey_definitions_enabled` is on;
 #:   0028 (LIB-1, server-issued codes)        — needed when `survey_library_enabled` is on;
@@ -105,9 +107,11 @@ MIGRATION_HEAD = "0034_survey_control_policy"
 #:   0032 (ASG-2B, coordinated simulation)    — needed when `survey_coordinated_simulation_enabled` is on.
 #:   0033 (EVAL-1, control evaluation)        — needed when `survey_evaluation_enabled` is on.
 #:   0034 (EVAL-2A, control policies)         — needed when `survey_control_policy_enabled` is on.
+#:   0035 (EVAL-2B, execution assurance)      — needed when `survey_execution_assurance_enabled` is on.
 #: With a setting on, the schema must hold that setting's revision, or readiness fails closed.
 OPTIONAL_REVISIONS = (
-    "0034_survey_control_policy", "0033_survey_control_evaluation", "0032_survey_coordinated_sim",
+    "0035_survey_execution_assurance", "0034_survey_control_policy", "0033_survey_control_evaluation",
+    "0032_survey_coordinated_sim",
     "0031_survey_assignment_groups",
     "0030_survey_assignment", "0029_survey_simulation", "0028_survey_library", "0027_survey_definitions",
     "0026_gpt_live_provider",
@@ -150,18 +154,24 @@ def survey_control_policy_on(settings: Settings) -> bool:
     return survey_evaluation_on(settings) and settings.survey_control_policy_enabled
 
 
+def survey_execution_assurance_on(settings: Settings) -> bool:
+    """Assurance verifies the journeys that are evaluated: on only when evaluation is."""
+    return survey_evaluation_on(settings) and settings.survey_execution_assurance_enabled
+
+
 def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
     """The head, and every earlier revision down to the newest one that something switched on needs."""
     needed = (
-        0 if survey_control_policy_on(settings)
-        else 1 if survey_evaluation_on(settings)
-        else 2 if survey_coordinated_simulation_on(settings)
-        else 3 if survey_assignment_groups_on(settings)
-        else 4 if survey_assignment_on(settings)
-        else 5 if survey_simulation_on(settings)
-        else 6 if survey_library_on(settings)
-        else 7 if settings.survey_definitions_enabled
-        else 8
+        0 if survey_execution_assurance_on(settings)
+        else 1 if survey_control_policy_on(settings)
+        else 2 if survey_evaluation_on(settings)
+        else 3 if survey_coordinated_simulation_on(settings)
+        else 4 if survey_assignment_groups_on(settings)
+        else 5 if survey_assignment_on(settings)
+        else 6 if survey_simulation_on(settings)
+        else 7 if survey_library_on(settings)
+        else 8 if settings.survey_definitions_enabled
+        else 9
     )  # fmt: skip
     return OPTIONAL_REVISIONS[: needed + 1]
 
@@ -261,6 +271,11 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
         if survey_control_policy_on(settings):
             # EVAL-2A: off by default. Governed control policies, applicability and coverage of SIMULATED journeys.
             app.include_router(survey_control_policies.router)
+        if survey_execution_assurance_on(settings):
+            # EVAL-2B: off by default. Verifies the RECORDED execution of simulated journeys; executes nothing.
+            app.include_router(survey_execution_assurance.router)
+            # E2E-1: read-only provenance of one simulated journey across the records above. No table, no write.
+            app.include_router(survey_journey_trace.router)
     return app
 
 

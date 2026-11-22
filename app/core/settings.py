@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # EVAL-2A: governed control policies, applicability and coverage of SIMULATED journeys. OFF by default; needs
     # `survey_evaluation_enabled` and migration 0034. Establishes nothing about a real application.
     survey_control_policy_enabled: bool = False
+    # EVAL-2B: execution assurance of SIMULATED journeys — whether the recorded execution followed its pinned plan.
+    # OFF by default; needs `survey_evaluation_enabled` and migration 0035. Establishes nothing about a real call.
+    survey_execution_assurance_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

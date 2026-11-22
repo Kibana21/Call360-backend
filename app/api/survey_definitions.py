@@ -495,6 +495,135 @@ def survey_definition_list(auth: AuthContext = Depends(require(READ)), db: Sessi
     return SurveyList(items=[_survey_out(db, r) for r in store.surveys(db, _markets(auth))])
 
 
+class SurveyWorkspaceOut(BaseModel):
+    """UX-HOME-1 — what the Survey Studio workspace shows first. READ ONLY: counted and listed from the records as they
+    stand, in the reader's markets. Nothing here is a metric of use, quality or compliance, and nothing is estimated."""
+
+    markets: list[str]
+    library_enabled: bool
+    inventory: dict[str, Any] = Field(
+        description="Counts of surveys by derived status and, when the library is on, of published reusable components by kind."  # noqa: E501
+    )
+    recent_drafts: list[dict[str, Any]] = Field(description="Drafts most recently saved, newest first.")
+    recent_published: list[dict[str, Any]] = Field(description="Survey versions most recently published, newest first.")
+    awaiting_you: list[dict[str, Any]] = Field(
+        description="Survey candidates the identity rules AND the reader's permissions allow the reader to approve or publish now."  # noqa: E501
+    )
+    waiting_on_others: list[dict[str, Any]] = Field(
+        description="Open candidates the reader submitted, which someone else must decide or publish."
+    )
+    reused_modules: list[dict[str, Any]] = Field(
+        description="Published modules pinned by more than one survey, most widely pinned first. Counted from published versions; empty when none is reused."  # noqa: E501
+    )
+    note: str
+
+
+@router.get(
+    "/survey-definitions/workspace",
+    response_model=SurveyWorkspaceOut,
+    operation_id="survey_workspace_get",
+    responses=_ERR,
+)
+def survey_workspace_get(
+    request: Request, auth: AuthContext = Depends(require(READ)), db: Session = Depends(get_db)
+) -> SurveyWorkspaceOut:
+    """One read for the workspace's first screen. Counts and lists only; it decides nothing and changes nothing."""
+    markets = _markets(auth)
+    library_on = bool(request.app.state.settings.survey_library_enabled)
+    rows = store.surveys(db, markets)
+    by_id = {r["id"]: r for r in rows}
+    ids = list(by_id)
+    who = str(auth.principal_id)
+
+    def ref(r: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "survey_id": r["id"],
+            "survey_code": r["code"],
+            "survey_name": r["name"],
+            "market_code": r["market_code"],
+        }
+
+    drafts = store._all(  # noqa: SLF001 — one read of the drafts of the surveys listed above
+        db,
+        "SELECT survey_definition_id AS sid, revision, updated_at, updated_by FROM survey_draft "
+        "WHERE survey_definition_id = ANY(:i) ORDER BY updated_at DESC",
+        i=ids,
+    )
+    versions = store._all(  # noqa: SLF001
+        db,
+        "SELECT id, survey_definition_id AS sid, label, version_no, created_at FROM survey_version "
+        "WHERE survey_definition_id = ANY(:i) ORDER BY created_at DESC",
+        i=ids,
+    )
+    candidates = store._all(  # noqa: SLF001
+        db,
+        "SELECT id, survey_definition_id AS sid, n, makers, submitted_by, submitted_at FROM survey_candidate "
+        "WHERE survey_definition_id = ANY(:i) ORDER BY submitted_at",
+        i=ids,
+    )
+    published = {v["sid"] for v in versions}
+    counts = {"IN_REVIEW": 0, "APPROVED": 0}
+    awaiting: list[dict[str, Any]] = []
+    waiting: list[dict[str, Any]] = []
+    for c in candidates:
+        status = store.status_of(db, c["id"])
+        if status not in store.OPEN_CANDIDATE:
+            continue
+        counts[status] += 1
+        entry = {
+            **ref(by_id[c["sid"]]), "kind": "SURVEY_CANDIDATE", "candidate_id": c["id"], "candidate_n": c["n"],
+            "status": status, "since": c["submitted_at"],
+        }  # fmt: skip
+        allowed = store.restrictions(db, c, auth.actor)
+        # the same two conditions the operations enforce: the identity rule, and the permission
+        if allowed["can_decide"] and APPROVE in auth.permissions:
+            awaiting.append(entry | {"action": "DECIDE"})
+        elif allowed["can_publish"] and PUBLISH in auth.permissions:
+            awaiting.append(entry | {"action": "PUBLISH"})
+        elif c["submitted_by"] == who:
+            waiting.append(entry | {"waiting_for": "A_REVIEWER" if status == "IN_REVIEW" else "A_PUBLISHER"})
+
+    inventory: dict[str, Any] = {
+        "surveys": {
+            "total": len(rows), "with_a_published_version": len(published),
+            "never_published": len(rows) - len(published), "in_review": counts["IN_REVIEW"],
+            "approved_awaiting_publication": counts["APPROVED"],
+        },
+        "components": None,
+    }  # fmt: skip
+    reused: list[dict[str, Any]] = []
+    if library_on:
+        kinds: dict[str, Any] = {}
+        for kind in ("MODULE", "ITEM", "CONDITION", "OPTION_SET"):
+            items = store.components(db, markets, kind)
+            codes = {i["code"] for i in items}
+            kinds[kind] = {
+                "components": len(codes), "published_revisions": len({(i["code"], i["version"]) for i in items}),
+                "pinned_by_more_than_one_survey": len({i["code"] for i in items if i["used_by"]["surveys"] > 1}),
+            }  # fmt: skip
+            if kind == "ITEM":
+                statements = {i["code"] for i in items if i["category"] == "STATEMENT"}
+                kinds[kind] |= {"questions": len(codes - statements), "statements": len(statements)}
+            if kind == "MODULE":
+                reused = sorted(
+                    (i for i in items if i["is_latest"] and i["used_by"]["surveys"] > 1),
+                    key=lambda i: (-i["used_by"]["surveys"], i["title"].lower()),
+                )[:6]
+        inventory["components"] = kinds
+    return SurveyWorkspaceOut(
+        markets=markets, library_enabled=library_on, inventory=inventory,
+        recent_drafts=[
+            {**ref(by_id[d["sid"]]), "draft_revision": d["revision"], "saved_at": d["updated_at"], "saved_by_you": d["updated_by"] == who, "ever_published": d["sid"] in published}  # noqa: E501
+            for d in drafts[:6]
+        ],
+        recent_published=[
+            {**ref(by_id[v["sid"]]), "version_id": v["id"], "version_label": v["label"], "published_at": v["created_at"]}  # noqa: E501
+            for v in versions[:6]
+        ],
+        awaiting_you=awaiting, waiting_on_others=waiting, reused_modules=reused, note=NOTE,
+    )  # fmt: skip
+
+
 @router.get(
     "/survey-definitions/{survey_id}", response_model=SurveyOut, operation_id="survey_definition_get", responses=_ERR
 )

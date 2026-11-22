@@ -523,7 +523,10 @@ def test_two_surveys_are_simulated_in_their_governed_order_each_by_its_own_engin
         ).scalars()
     )
     # nothing operational refers to a coordinated simulation; from EVAL-1 only the evaluation of that journey does
-    assert inbound <= {"survey_journey_evaluation"}
+    assert inbound <= {
+        "survey_journey_evaluation",
+        "survey_execution_assurance",
+    }  # EVAL-2B: the assurance of that journey
 
     # ---- 16. nothing of Script Studio and nothing operational was created or changed; everything is audited
     with engine.connect() as conn:
@@ -600,7 +603,7 @@ def test_zz_migration_0032_goes_down_and_up_and_changes_nothing_else(
         "survey_coordinated_simulation", "survey_coordinated_simulation_step",
         # EVAL-1 (0033) sits above 0032 and goes down with it: evaluation records are simulation records
         "survey_control_mapping", "survey_control_mapping_event", "survey_journey_evaluation", "survey_control_result",
-        "survey_evidence_observation", "survey_evaluation_finding", "survey_control_policy", "survey_control_policy_event", "survey_evaluation_policy", "survey_obligation_result", "survey_obligation_observation", "survey_obligation_finding",
+        "survey_evidence_observation", "survey_evaluation_finding", "survey_control_policy", "survey_control_policy_event", "survey_evaluation_policy", "survey_obligation_result", "survey_obligation_observation", "survey_obligation_finding", "survey_execution_assurance", "survey_execution_assurance_survey",
     }  # fmt: skip
 
     def state() -> tuple[set[str], str]:
@@ -610,7 +613,7 @@ def test_zz_migration_0032_goes_down_and_up_and_changes_nothing_else(
             ), c.execute(text("SELECT version_num FROM call360_test.alembic_version")).scalar_one()
 
     full = state()
-    assert mine <= full[0] and full[1] == "0034_survey_control_policy"
+    assert mine <= full[0] and full[1] == "0035_survey_execution_assurance"
     migrate(settings, "0031_survey_assignment_groups", down=True)
     assert state() == (full[0] - mine, "0031_survey_assignment_groups")
     migrate(settings, "head")

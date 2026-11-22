@@ -34,6 +34,7 @@ def render() -> str:
         survey_coordinated_simulation_enabled=True,  # ASG-2B: likewise
         survey_evaluation_enabled=True,  # EVAL-1: likewise
         survey_control_policy_enabled=True,  # EVAL-2A: likewise
+        survey_execution_assurance_enabled=True,  # EVAL-2B: likewise
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
