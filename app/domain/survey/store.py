@@ -41,6 +41,10 @@ STATUS_OF_EVENT = {
     "SCHEDULED": "SCHEDULED",
 }
 OPEN_CANDIDATE = ("IN_REVIEW", "APPROVED")
+#: LIB-2 — what a definition IS: a survey, or a reusable module authored on its own. Read through ``to_jsonb`` so the
+#: same statement also runs on a schema that predates migration 0036, where every definition is a survey.
+ARTIFACT_KINDS = ("SURVEY", "MODULE")
+KIND_SQL = "coalesce(to_jsonb(d.*)->>'artifact_kind', 'SURVEY')"
 
 
 class SurveyError(Exception):
@@ -112,7 +116,8 @@ def survey(db: Session, sid: uuid.UUID, markets: Sequence[str], *, lock: bool = 
     """Object-level scope: a survey outside the caller's markets does not exist for them."""
     row = _one(
         db,
-        "SELECT * FROM survey_definition WHERE id = :i AND market_code = ANY(:m)" + (" FOR UPDATE" if lock else ""),
+        f"SELECT d.*, {KIND_SQL} AS artifact_kind FROM survey_definition d "
+        "WHERE d.id = :i AND d.market_code = ANY(:m)" + (" FOR UPDATE" if lock else ""),
         i=sid,
         m=list(markets),
     )
@@ -121,8 +126,14 @@ def survey(db: Session, sid: uuid.UUID, markets: Sequence[str], *, lock: bool = 
     return row
 
 
-def surveys(db: Session, markets: Sequence[str]) -> list[dict[str, Any]]:
-    return _all(db, "SELECT * FROM survey_definition WHERE market_code = ANY(:m) ORDER BY code", m=list(markets))
+def surveys(db: Session, markets: Sequence[str], kind: str = "SURVEY") -> list[dict[str, Any]]:
+    """The definitions of ONE kind in the given markets. A standalone module (LIB-2) is never listed as a survey."""
+    return _all(
+        db,
+        f"SELECT d.*, {KIND_SQL} AS artifact_kind FROM survey_definition d "
+        f"WHERE d.market_code = ANY(:m) AND {KIND_SQL} = :k ORDER BY d.code",
+        m=list(markets), k=kind,
+    )  # fmt: skip
 
 
 def draft(db: Session, sid: uuid.UUID, *, lock: bool = False) -> dict[str, Any]:
@@ -322,6 +333,7 @@ def apply_operation(
     who = _ref(actor)
     content, summary = _apply_one(db, sid, d["content"], operation, who, require_issued)
     _check_references(db, sid, content)
+    _module_rules(db, sid, content)
     _advance(db, d, content, who)
     _audit(
         db, actor, meta, "SURVEY.DRAFT_CHANGED", "survey_definition", sid, {**summary, "revision": d["revision"] + 1}
@@ -355,6 +367,7 @@ def apply_batch(
             raise
         summaries.append(summary)
     _check_references(db, sid, content)
+    _module_rules(db, sid, content)
     _advance(db, d, content, who)
     counts: dict[str, int] = {}
     for s in summaries:
@@ -508,6 +521,7 @@ def published_versions(db: Session, markets: Sequence[str]) -> list[dict[str, An
         db,
         "SELECT v.id AS version_id, v.label, v.version_no, v.created_at, v.created_by, d.id AS survey_id, "
         "d.code AS survey_code, d.name AS survey_name, d.market_code, c.manifest, "
+        f"{KIND_SQL} AS artifact_kind, "
         "(SELECT e.event FROM survey_lifecycle_event e WHERE e.subject_id = v.id ORDER BY e.seq DESC LIMIT 1) AS event "
         "FROM survey_version v JOIN survey_candidate c ON c.id = v.candidate_id "
         "JOIN survey_definition d ON d.id = v.survey_definition_id WHERE d.market_code = ANY(:m) "
@@ -707,6 +721,7 @@ def submit(
     survey(db, sid, markets)
     d = draft(db, sid, lock=True)
     content = d["content"]
+    _module_rules(db, sid, content)
     findings = findings_of(db, content, sid)
     blockers = [f for f in findings if f["severity"] == "BLOCKER"]
     if blockers:
@@ -764,7 +779,8 @@ def submit(
 def candidate(db: Session, cid: uuid.UUID, markets: Sequence[str], *, lock: bool = False) -> dict[str, Any]:
     row = _one(
         db,
-        "SELECT c.*, d.market_code, d.code AS survey_code FROM survey_candidate c JOIN survey_definition d "
+        f"SELECT c.*, d.market_code, d.code AS survey_code, {KIND_SQL} AS artifact_kind "
+        "FROM survey_candidate c JOIN survey_definition d "
         "ON d.id = c.survey_definition_id WHERE c.id = :i AND d.market_code = ANY(:m)"
         + (" FOR UPDATE OF c" if lock else ""),
         i=cid, m=list(markets),
@@ -956,14 +972,17 @@ def publish(
     return vid
 
 
-def version(db: Session, vid: uuid.UUID, markets: Sequence[str]) -> dict[str, Any]:
+def version(db: Session, vid: uuid.UUID, markets: Sequence[str], kinds: Sequence[str] = ("SURVEY",)) -> dict[str, Any]:
+    """A published version in the caller's markets. By default a version OF A SURVEY: everything that simulates,
+    plans, assigns or evaluates reads a version through here, so the published record of a standalone module (LIB-2)
+    does not exist for any of it. Only the governance screens ask for both kinds."""
     row = _one(
         db,
         "SELECT v.*, c.content, c.content_sha256, c.manifest, "
-        "c.manifest_sha256, c.n AS candidate_n, d.code AS survey_code "
+        f"c.manifest_sha256, c.n AS candidate_n, d.code AS survey_code, {KIND_SQL} AS artifact_kind "
         "FROM survey_version v JOIN survey_candidate c ON c.id = v.candidate_id JOIN survey_definition d "
-        "ON d.id = v.survey_definition_id WHERE v.id = :i AND d.market_code = ANY(:m)",
-        i=vid, m=list(markets),
+        f"ON d.id = v.survey_definition_id WHERE v.id = :i AND d.market_code = ANY(:m) AND {KIND_SQL} = ANY(:k)",
+        i=vid, m=list(markets), k=list(kinds),
     )  # fmt: skip
     if row is None:
         raise SurveyError(404, "NOT_FOUND", "Version not found or not available to you")
@@ -1117,6 +1136,144 @@ def survey_history(db: Session, sid: uuid.UUID) -> dict[str, Any]:
     }  # fmt: skip
 
 
+# ------------------------------------------------------------------------- LIB-2: a module authored on its own
+#: The one placement in a standalone module's content. A module's execution needs a survey content around it — where
+#: each of its endings leads. For a standalone module that content is this fixed frame and nothing else: the module,
+#: once, always entered, every ending of the module ending the run AS ITSELF. It carries no decision of an author.
+MODULE_INSTANCE = "module"
+
+
+def module_frame(code: str, doc: Mapping[str, Any], instance: str = MODULE_INSTANCE) -> dict[str, Any]:
+    return {
+        "schema": SCHEMA_OF["SURVEY"],
+        "code": code,
+        "sequence": [
+            {
+                "instance": instance,
+                "module": {"code": str(doc["code"]), "revision": int(doc["revision"])},
+                "routes": {str(o): {"survey_outcome": str(o)} for o in doc.get("outcomes", [])},
+            }
+        ],
+    }
+
+
+def empty_module(code: str, name: str, description: str) -> dict[str, Any]:
+    return {
+        "schema": SCHEMA_OF["MODULE"], "code": code, "revision": 1, "name": name, "outcomes": [], "entry": None,
+        "nodes": [], "edges": [], **({"authoring": {"intent": description}} if description else {}),
+    }  # fmt: skip
+
+
+def create_module(
+    db: Session, *, name: str, description: str, market: str, actor: Actor, meta: RequestMeta | None = None
+) -> uuid.UUID:
+    """A standalone module: a definition of kind MODULE whose code IS the module's code, issued by the server; its
+    first, empty, draft revision; and the fixed frame that pins it. No survey is created, and none is needed."""
+    name, description = name.strip(), description.strip()
+    if not 3 <= len(name) <= 160:
+        raise SurveyError(422, "OPERATION_INVALID", "A module name has 3 to 160 characters")
+    if len(description) > 2000:
+        raise SurveyError(422, "OPERATION_INVALID", "A description has at most 2000 characters")
+    who = _ref(actor)
+    while True:
+        n = db.execute(text("SELECT nextval('survey_code_seq')")).scalar_one()
+        code = f"{CODE_PREFIX['MODULE']}-{n}"
+        taken = _one(db, "SELECT 1 AS x FROM survey_asset_version WHERE code = :c LIMIT 1", c=code) or _one(
+            db, "SELECT 1 AS x FROM survey_definition WHERE code = :c", c=code
+        )
+        if not taken:
+            break
+    mid = uuid.uuid4()
+    db.execute(
+        text(
+            "INSERT INTO survey_definition (id, code, name, purpose, market_code, created_by, artifact_kind) "
+            "VALUES (:i, :c, :n, :p, :m, :by, 'MODULE')"
+        ),
+        {"i": mid, "c": code, "n": name, "p": description, "m": market, "by": who},
+    )
+    db.execute(
+        text(
+            "INSERT INTO survey_issued_code (code, kind, survey_definition_id, issued_by) "
+            "VALUES (:c, 'MODULE', :s, :by)"
+        ),
+        {"c": code, "s": mid, "by": who},
+    )
+    doc = empty_module(code, name, description)
+    db.execute(
+        text(
+            "INSERT INTO survey_asset_version (id, kind, code, version, state, content, sha256, owner_definition_id, "
+            "created_by) VALUES (:i, 'MODULE', :c, 1, 'DRAFT', CAST(:j AS jsonb), :h, :o, :by)"
+        ),
+        {"i": uuid.uuid4(), "c": code, "j": json.dumps(doc), "h": sha256_hex(doc), "o": mid, "by": who},
+    )
+    db.execute(
+        text(
+            "INSERT INTO survey_draft (id, survey_definition_id, revision, content, makers, updated_by) "
+            "VALUES (:i, :s, 0, CAST(:c AS jsonb), CAST(:m AS jsonb), :by)"
+        ),
+        {"i": uuid.uuid4(), "s": mid, "c": json.dumps(module_frame(code, doc)), "m": json.dumps([who]), "by": who},
+    )
+    _audit(db, actor, meta, "SURVEY.MODULE_CREATED", "survey_definition", mid, {"code": code, "market": market})
+    return mid
+
+
+def module(db: Session, mid: uuid.UUID, markets: Sequence[str]) -> dict[str, Any]:
+    """A standalone module in the caller's markets. A survey is not one, and does not exist here."""
+    try:
+        row = survey(db, mid, markets)
+    except SurveyError:
+        row = None
+    if row is None or row["artifact_kind"] != "MODULE":
+        raise SurveyError(404, "NOT_FOUND", "Module not found or not available to you")
+    return row
+
+
+def _module_rules(db: Session, sid: uuid.UUID, content: Mapping[str, Any]) -> None:
+    """What holds for the draft of a STANDALONE MODULE, whatever client saved it: its content is exactly the fixed
+    frame around one revision of its own module — never a second module, an entry condition or a route an author
+    chose. The definition is named after the module it holds. A survey's draft is not touched by this."""
+    row = _one(
+        db, f"SELECT d.code, d.name, d.purpose, {KIND_SQL} AS artifact_kind FROM survey_definition d WHERE d.id = :i",
+        i=sid,
+    )  # fmt: skip
+    if row is None or row["artifact_kind"] != "MODULE":
+        return
+    seq = content.get("sequence") if isinstance(content, Mapping) else None
+    inst = seq[0] if isinstance(seq, list) and len(seq) == 1 and isinstance(seq[0], Mapping) else None
+    ref = (inst or {}).get("module") or {}
+    doc = _doc(db, "MODULE", str(ref.get("code")), int(ref.get("revision") or 0)) if inst else None
+    ok = (
+        inst is not None and doc is not None and ref.get("code") == row["code"]
+        and doc["owner_definition_id"] == sid
+        and dict(content) == module_frame(row["code"], doc["content"], str(inst.get("instance")))
+    )  # fmt: skip
+    if not ok or doc is None:
+        raise SurveyError(
+            422,
+            "MODULE_FRAME_INVALID",
+            "A standalone module holds exactly one revision of its own module and nothing else: no second module, "
+            "no entry condition, and every ending of the module ends the run as itself",
+        )
+    name = str(doc["content"].get("name") or "").strip()[:160] or row["code"]
+    purpose = str((doc["content"].get("authoring") or {}).get("intent") or "")[:2000]
+    if (name, purpose) != (row["name"], row["purpose"]):
+        db.execute(
+            text("UPDATE survey_definition SET name = :n, purpose = :p WHERE id = :i"),
+            {"n": name, "p": purpose, "i": sid},
+        )
+
+
+def origin_of(db: Session, owner: Any) -> dict[str, Any] | None:
+    """Where an asset version was written: the survey, or the standalone module, that owns it."""
+    row = _one(
+        db, f"SELECT d.id, d.code, d.name, {KIND_SQL} AS artifact_kind FROM survey_definition d WHERE d.id = :i",
+        i=owner,
+    )  # fmt: skip
+    if row is None:
+        return None
+    return {"definition_id": row["id"], "code": row["code"], "name": row["name"], "artifact_kind": row["artifact_kind"]}
+
+
 # ------------------------------------------------------------------------------- LIB-1: the component library, read
 COMPONENT_KINDS = ("MODULE", "ITEM", "CONDITION", "OPTION_SET")
 
@@ -1138,7 +1295,8 @@ def _usage(db: Session, markets: Sequence[str], kind: str, code: str, version: i
         "FROM survey_asset_usage u JOIN survey_version v ON v.id = u.subject_id "
         "JOIN survey_definition d ON d.id = v.survey_definition_id "
         "WHERE u.subject_type = 'VERSION' AND u.kind = :k AND u.code = :c AND u.version = :v "
-        "AND d.market_code = ANY(:m)",
+        # a module's own publication record is not a survey that uses it
+        f"AND d.market_code = ANY(:m) AND {KIND_SQL} = 'SURVEY'",
         k=kind, c=code, v=version, m=list(markets),
     )  # fmt: skip
     return {"versions": int(row["versions"]) if row else 0, "surveys": int(row["surveys"]) if row else 0}
@@ -1149,6 +1307,7 @@ def _sources(pins: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         {
             "survey_id": v["survey_id"], "survey_code": v["survey_code"], "survey_name": v["survey_name"],
             "version_id": v["version_id"], "version_label": v["label"], "version_status": v["event"],
+            "artifact_kind": v.get("artifact_kind", "SURVEY"),
         }
         for v in pins
     ]  # fmt: skip
@@ -1271,6 +1430,7 @@ def components(db: Session, markets: Sequence[str], kind: str, query: str = "") 
                 "kind": kind, "code": code, "version": version, "sha256": row["sha256"], "wording_version": wv,
                 **_summary(db, kind, row["content"], wrow["content"] if wrow else None),
                 "published_in": _sources(pins), "used_by": _usage(db, markets, kind, code, version),
+                "origin": origin_of(db, row["owner_definition_id"]),
                 "latest_published_version": latest[code], "is_latest": latest[code] == version,
             }  # fmt: skip
             out.append(entry)
@@ -1353,6 +1513,7 @@ def component(
         **_summary(db, kind, doc, wdoc if kind == "ITEM" else None),
         "document": doc, "dependencies": dependencies, "missing_dependencies": missing,
         "revisions": revisions, "published_in": _sources(pins), "used_by": _usage(db, markets, kind, code, version),
+        "origin": origin_of(db, row["owner_definition_id"]),
         "latest_published_version": max(r["version"] for r in revisions),
         "is_latest": max(r["version"] for r in revisions) == version,
         "requires": {"fields": sorted(fields)},

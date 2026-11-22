@@ -957,7 +957,7 @@ def survey_candidate_publish(
         db.rollback()
         raise _err(exc) from exc
     db.commit()
-    return _version_out(db, store.version(db, vid, _markets(auth)))
+    return _version_out(db, store.version(db, vid, _markets(auth), store.ARTIFACT_KINDS))
 
 
 # ------------------------------------------------------------------------------------------------------------ versions
@@ -968,7 +968,7 @@ def survey_version_get(
     version_id: uuid.UUID, auth: AuthContext = Depends(require(READ)), db: Session = Depends(get_db)
 ) -> SurveyVersionOut:
     try:
-        return _version_out(db, store.version(db, version_id, _markets(auth)))
+        return _version_out(db, store.version(db, version_id, _markets(auth), store.ARTIFACT_KINDS))
     except store.SurveyError as exc:
         raise _err(exc) from exc
 
@@ -984,7 +984,7 @@ def survey_version_content(
 ) -> SurveyVersionContent:
     """The published content document and the manifest that pins every version it uses."""
     try:
-        v = store.version(db, version_id, _markets(auth))
+        v = store.version(db, version_id, _markets(auth), store.ARTIFACT_KINDS)
     except store.SurveyError as exc:
         raise _err(exc) from exc
     return SurveyVersionContent(
@@ -1049,6 +1049,20 @@ class SurveyComponentSource(BaseModel):
     version_id: uuid.UUID
     version_label: str
     version_status: str
+    artifact_kind: Literal["SURVEY", "MODULE"] = Field(
+        default="SURVEY",
+        description="SURVEY: a survey whose published version pins this. MODULE: the standalone module's own "
+        "publication record (LIB-2) — not a survey, and not counted as a use.",
+    )
+
+
+class SurveyComponentOrigin(BaseModel):
+    """LIB-2 — where this version was written: the survey, or the standalone module, that owns it."""
+
+    definition_id: uuid.UUID
+    code: str
+    name: str
+    artifact_kind: Literal["SURVEY", "MODULE"]
 
 
 class SurveyComponentUsage(BaseModel):
@@ -1068,6 +1082,7 @@ class SurveyComponentOut(BaseModel):
     facts: dict[str, Any]
     published_in: list[SurveyComponentSource]
     used_by: SurveyComponentUsage
+    origin: SurveyComponentOrigin | None = None
     latest_published_version: int
     is_latest: bool
 

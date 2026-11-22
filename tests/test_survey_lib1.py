@@ -939,7 +939,8 @@ def test_with_the_library_setting_off_its_routes_do_not_exist_and_the_reference_
 
 def test_each_setting_demands_its_own_migration_and_no_more(settings: Settings) -> None:
     on = lambda **k: settings.model_copy(update=k)
-    h35, h34, h33, h32, h31, h30, h29, h28, h27, h26 = (
+    h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26 = (
+        "0036_survey_module_authoring",
         "0035_survey_execution_assurance",
         "0034_survey_control_policy",
         "0033_survey_control_evaluation",
@@ -951,51 +952,57 @@ def test_each_setting_demands_its_own_migration_and_no_more(settings: Settings) 
         "0027_survey_definitions",
         "0026_gpt_live_provider",
     )
-    top = (h35, h34, h33, h32, h31, h30, h29, h28, h27, h26)
-    assert MIGRATION_HEAD == h35
+    full = (h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26)
+    assert MIGRATION_HEAD == h36
+    # LIB-2: standalone modules need 0036, and are on only with the library; with them off everything below is as it
+    # was, one revision further from the head
+    lib_ = on(survey_definitions_enabled=True, survey_library_enabled=True)
+    assert acceptable_migration_heads(lib_.model_copy(update={"survey_module_authoring_enabled": True})) == full[:1]
+    assert (
+        acceptable_migration_heads(on(survey_definitions_enabled=True, survey_module_authoring_enabled=True))
+        == full[:10]
+    )
+    assert acceptable_migration_heads(lib_) == full[:9]
     ev_ = on(survey_definitions_enabled=True, survey_simulation_enabled=True, survey_evaluation_enabled=True)
     # EVAL-2B: execution assurance needs 0035, and is on only with evaluation
-    assert acceptable_migration_heads(ev_.model_copy(update={"survey_execution_assurance_enabled": True})) == top[:1]
+    assert acceptable_migration_heads(ev_.model_copy(update={"survey_execution_assurance_enabled": True})) == full[:2]
     assert (
         acceptable_migration_heads(
             on(survey_definitions_enabled=True, survey_simulation_enabled=True, survey_execution_assurance_enabled=True)
         )
-        == top[:7]
+        == full[:8]
     )
     # EVAL-2A: control policies need 0034, and are on only with evaluation
-    assert acceptable_migration_heads(ev_.model_copy(update={"survey_control_policy_enabled": True})) == top[:2]
-    assert acceptable_migration_heads(ev_) == top[:3]  # EVAL-1: evaluation needs 0033, and is on only with simulation
+    assert acceptable_migration_heads(ev_.model_copy(update={"survey_control_policy_enabled": True})) == full[:3]
+    assert acceptable_migration_heads(ev_) == full[:4]  # EVAL-1: evaluation needs 0033, and is on only with simulation
     sim_ = on(survey_definitions_enabled=True, survey_simulation_enabled=True)
-    assert acceptable_migration_heads(sim_.model_copy(update={"survey_control_policy_enabled": True})) == top[:7]
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_evaluation_enabled=True)) == top[:9]
-    assert acceptable_migration_heads(on(survey_evaluation_enabled=True)) == top
-    latest = top
-    newest = latest
-    every = newest  # everything below is as it was, one revision further from the head
-    assert acceptable_migration_heads(on()) == every
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True)) == every[:9]
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_library_enabled=True)) == every[:8]
-    assert acceptable_migration_heads(on(survey_library_enabled=True)) == every  # the library alone is not on
+    assert acceptable_migration_heads(sim_.model_copy(update={"survey_control_policy_enabled": True})) == full[:8]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_evaluation_enabled=True)) == full[:10]
+    assert acceptable_migration_heads(on(survey_evaluation_enabled=True)) == full
+    assert acceptable_migration_heads(on()) == full
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True)) == full[:10]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_library_enabled=True)) == full[:9]
+    assert acceptable_migration_heads(on(survey_library_enabled=True)) == full  # the library alone is not on
     # SS-03B: simulation needs 0029, whatever else is on; alone (without survey definitions) it is not on
     both = on(survey_definitions_enabled=True, survey_simulation_enabled=True)
-    assert acceptable_migration_heads(both) == every[:7]
-    assert acceptable_migration_heads(both.model_copy(update={"survey_library_enabled": True})) == every[:7]
-    assert acceptable_migration_heads(on(survey_simulation_enabled=True)) == every
+    assert acceptable_migration_heads(both) == full[:8]
+    assert acceptable_migration_heads(both.model_copy(update={"survey_library_enabled": True})) == full[:8]
+    assert acceptable_migration_heads(on(survey_simulation_enabled=True)) == full
     # ASG-1: assignment needs 0030, and is on only with simulation
     asg = both.model_copy(update={"survey_assignment_enabled": True})
-    assert acceptable_migration_heads(asg) == every[:6]
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_assignment_enabled=True)) == every[:9]
+    assert acceptable_migration_heads(asg) == full[:7]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_assignment_enabled=True)) == full[:10]
     # ASG-2A: requirement groups need 0031, and are on only with assignment
     groups = asg.model_copy(update={"survey_assignment_groups_enabled": True})
-    assert acceptable_migration_heads(groups) == every[:5]
-    assert acceptable_migration_heads(both.model_copy(update={"survey_assignment_groups_enabled": True})) == every[:7]
+    assert acceptable_migration_heads(groups) == full[:6]
+    assert acceptable_migration_heads(both.model_copy(update={"survey_assignment_groups_enabled": True})) == full[:8]
     # ASG-2B: coordinated simulation needs 0032, and is on only with requirement groups
     assert (
         acceptable_migration_heads(groups.model_copy(update={"survey_coordinated_simulation_enabled": True}))
-        == every[:4]
+        == full[:5]
     )
     assert (
-        acceptable_migration_heads(asg.model_copy(update={"survey_coordinated_simulation_enabled": True})) == every[:6]
+        acceptable_migration_heads(asg.model_copy(update={"survey_coordinated_simulation_enabled": True})) == full[:7]
     )
 
 

@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     # EVAL-2B: execution assurance of SIMULATED journeys — whether the recorded execution followed its pinned plan.
     # OFF by default; needs `survey_evaluation_enabled` and migration 0035. Establishes nothing about a real call.
     survey_execution_assurance_enabled: bool = False
+    # LIB-2: a reusable MODULE authored, tested, reviewed and published on its own, without a survey. OFF by default;
+    # needs `survey_library_enabled` and migration 0036. Authoring and testing only: a standalone module is never a
+    # survey and cannot be simulated, planned or assigned as one.
+    survey_module_authoring_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

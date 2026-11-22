@@ -35,6 +35,7 @@ def render() -> str:
         survey_evaluation_enabled=True,  # EVAL-1: likewise
         survey_control_policy_enabled=True,  # EVAL-2A: likewise
         survey_execution_assurance_enabled=True,  # EVAL-2B: likewise
+        survey_module_authoring_enabled=True,  # LIB-2: likewise
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

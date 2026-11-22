@@ -42,6 +42,7 @@ PREFIXES = (
     "/api/v1/survey-call-plans",  # SS-03B
     "/api/v1/survey-assignment",  # ASG-1
     "/api/v1/survey-evaluation",  # EVAL-1
+    "/api/v1/survey-module",  # LIB-2: standalone modules and the one-module test
 )
 
 
@@ -433,8 +434,9 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 3 more with execution assurance's (EVAL-2B)
     # … and 1 read-only journey trace (E2E-1)
     # … and 1 read-only workspace summary (UX-HOME-1)
-    assert len([o for o in ops if is_survey_path(o[1])]) == 72
-    assert len(ops) == 199 + 72  # the 199 operations of the accepted contract, and these
+    # … and 4 of standalone modules (LIB-2): create, list, read, and the one-module test
+    assert len([o for o in ops if is_survey_path(o[1])]) == 76
+    assert len(ops) == 199 + 76  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
@@ -449,5 +451,6 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 4 of EVAL-2B
     # … and 2 of E2E-1
     # … and 1 of UX-HOME-1
-    assert len(survey_schemas) == 107 and len(schemas) == 405 + 107
-    assert MIGRATION_HEAD == "0035_survey_execution_assurance"
+    # … and 9 of LIB-2 (eight of the module operations, and where a library component was written)
+    assert len(survey_schemas) == 116 and len(schemas) == 405 + 116
+    assert MIGRATION_HEAD == "0036_survey_module_authoring"

@@ -24,7 +24,7 @@ from app.domain.survey.store import SurveyError
 from tests.support import Account, make_account, migrate
 from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
-HEAD, BEFORE = "0035_survey_execution_assurance", "0026_gpt_live_provider"  # 0027 … 0035 are all survey-only
+HEAD, BEFORE = "0036_survey_module_authoring", "0026_gpt_live_provider"  # 0027 … 0036 are all survey-only
 SURVEY_TABLES = {
     "survey_definition", "survey_draft", "survey_asset_version", "survey_candidate", "survey_version",
     "survey_lifecycle_event", "survey_wording_approval", "survey_asset_usage", "survey_catalog_entry",

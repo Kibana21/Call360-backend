@@ -37,6 +37,9 @@ SG = (
     # NAV-1: one person who may READ across the whole platform — Survey Studio, the script-side rule editors and the
     # operational Review Workbench — to walk the consolidated navigation in one session. No permission to change anything.
     ("E2E_PLATFORM_READER", "E2E platform reader", "E2E_PLATFORM_READER_SG", "e2e.survey.platform", "E2E Platform Reader", ("survey.read", "survey.simulate", ASG, EVR, "script.read", "queue.read", "case.read")),
+    # LIB-2: an author of standalone modules, who may also run the engine to test what they wrote. Running the engine
+    # is a permission of its own (SS-03B); an author is not given it by `survey.edit`.
+    ("E2E_MODULE_AUTHOR", "E2E module author", "E2E_MODULE_AUTHOR_SG", "e2e.survey.moduleauthor", "E2E Module Author", (*EDIT, "survey.simulate")),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (

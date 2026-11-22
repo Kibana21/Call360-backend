@@ -966,16 +966,19 @@ def test_assurance_is_off_by_default_and_its_migration_is_additive(
 
     def others() -> list[Any]:
         with engine.connect() as cx:
-            return [tuple(r) for r in cx.execute(text("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'call360_test' AND table_name NOT LIKE 'survey_execution_assurance%' AND table_name <> 'alembic_version' ORDER BY 1, 2"))] + [
-                tuple(r) for r in cx.execute(text("SELECT r.relname, k.conname, pg_get_constraintdef(k.oid) FROM pg_constraint k JOIN pg_class r ON r.oid = k.conrelid JOIN pg_namespace n ON n.oid = r.relnamespace WHERE n.nspname = 'call360_test' AND r.relname NOT LIKE 'survey_execution_assurance%' ORDER BY 1, 2"))
+            return [tuple(r) for r in cx.execute(text("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'call360_test' AND table_name NOT LIKE 'survey_execution_assurance%' AND table_name <> 'alembic_version' AND column_name <> 'artifact_kind' ORDER BY 1, 2"))] + [
+                tuple(r) for r in cx.execute(text("SELECT r.relname, k.conname, pg_get_constraintdef(k.oid) FROM pg_constraint k JOIN pg_class r ON r.oid = k.conrelid JOIN pg_namespace n ON n.oid = r.relnamespace WHERE n.nspname = 'call360_test' AND r.relname NOT LIKE 'survey_execution_assurance%' AND k.conname <> 'ck_survey_definition_artifact_kind' ORDER BY 1, 2"))
             ]  # fmt: skip
 
     # ---- a recorded assurance result is not destroyed by a downgrade
     full, structure = state(), others()
-    assert set(TABLES) <= full[0] and full[1] == "0035_survey_execution_assurance"
+    assert set(TABLES) <= full[0] and full[1] == "0036_survey_module_authoring"
     db.rollback()
     with pytest.raises(RuntimeError, match="recorded execution-assurance results exist"):
         migrate(settings, "0034_survey_control_policy", down=True)
+    # 0036 (LIB-2, one column, no standalone module here) rolled back first; 0035 then refused and kept every result
+    assert state() == (full[0], "0035_survey_execution_assurance")
+    migrate(settings, "head")
     assert state() == full and trio_[0].get(f"{E}/assurance/{a['id']}").json()["result_sha256"] == a["result_sha256"]
     for cx in trio_:
         cx.__exit__(None, None, None)
