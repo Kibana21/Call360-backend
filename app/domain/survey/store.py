@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.audit.chain import Actor, RequestMeta, write_audit
 from app.domain.survey.canonical import sha256_hex
+from app.domain.survey.conditions import fields_of
 from app.domain.survey.documents import SCHEMA_OF, Bundle, check_document, manifest_of, manifest_sha256
 from app.domain.survey.validator import validate
 
@@ -171,8 +172,9 @@ MAX_BATCH = 500
 
 
 def _apply_one(
-    db: Session, sid: uuid.UUID, content: Mapping[str, Any], operation: Mapping[str, Any], who: str
-) -> tuple[Mapping[str, Any], dict[str, Any]]:
+    db: Session, sid: uuid.UUID, content: Mapping[str, Any], operation: Mapping[str, Any], who: str,
+    require_issued: bool = False,
+) -> tuple[Mapping[str, Any], dict[str, Any]]:  # fmt: skip
     """One operation against the locked draft: writes the asset (if any) and returns the content and a summary. It does
     NOT touch the draft row; the caller advances the revision once, for one operation or for a whole batch."""
     op = operation.get("op")
@@ -229,6 +231,8 @@ def _apply_one(
     if existing and existing["owner_definition_id"] != sid:
         raise SurveyError(409, "ASSET_OWNED_ELSEWHERE", f"{kind} {code} version {version} is a draft of another survey")
     if op == "PUT_ASSET":
+        if not existing:
+            _check_identity(db, sid, kind, code, require_issued)
         params = {"k": kind, "c": code, "v": version, "j": json.dumps(doc), "h": sha256_hex(doc), "by": who}
         if existing:
             db.execute(
@@ -249,6 +253,40 @@ def _apply_one(
             raise SurveyError(404, "NOT_FOUND", "No such draft asset")
         db.execute(text("DELETE FROM survey_asset_version WHERE id = :i"), {"i": existing["id"]})
     return content, {**summary, "kind": kind, "code": code, "version": version}
+
+
+def _check_identity(db: Session, sid: uuid.UUID, kind: str, code: str, require_issued: bool) -> None:
+    """LIB-1 — who may start a NEW version of an asset code.
+
+    * A code that already has versions belongs to the survey that owns them. Another survey can PIN a published
+      version of it, and can derive its own copy under a code of its own; it can never add a version to someone else's
+      code (``CODE_OWNED_ELSEWHERE``). A wording follows its item.
+    * With the library on, a code nobody has used yet must have been ISSUED by the server to this survey for this kind
+      (``CODE_NOT_ISSUED``): the backend, not an editor, is the authority for a permanent identity. Historical codes
+      are never touched by this — it only concerns codes that do not exist yet.
+    """
+    lineage_kind = "ITEM" if kind == "WORDING" else kind
+    owners = _all(
+        db,
+        "SELECT DISTINCT owner_definition_id FROM survey_asset_version WHERE kind = :k AND code = :c",
+        k=lineage_kind, c=code,
+    )  # fmt: skip
+    if owners:
+        if all(o["owner_definition_id"] != sid for o in owners):
+            raise SurveyError(
+                409,
+                "CODE_OWNED_ELSEWHERE",
+                f"{lineage_kind} {code} belongs to another survey: pin a published version of it, or make a copy "
+                "under a code of your own",
+            )
+        return
+    if kind == "WORDING" or not require_issued:
+        return
+    issued = _one(db, "SELECT kind, survey_definition_id FROM survey_issued_code WHERE code = :c", c=code)
+    if not issued or issued["survey_definition_id"] != sid or issued["kind"] != kind:
+        raise SurveyError(
+            422, "CODE_NOT_ISSUED", f"{kind} {code} is not a code the server issued to this survey for a {kind}"
+        )
 
 
 def _locked_draft(db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int) -> dict[str, Any]:
@@ -277,12 +315,13 @@ def _advance(db: Session, d: Mapping[str, Any], content: Mapping[str, Any], who:
 
 def apply_operation(
     db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int, operation: Mapping[str, Any],
-    actor: Actor, meta: RequestMeta | None = None,
+    actor: Actor, meta: RequestMeta | None = None, *, require_issued: bool = False,
 ) -> dict[str, Any]:  # fmt: skip
     """Applies ONE operation to the draft. A stale ``expected_revision`` is refused before anything is written."""
     d = _locked_draft(db, sid, markets, expected_revision)
     who = _ref(actor)
-    content, summary = _apply_one(db, sid, d["content"], operation, who)
+    content, summary = _apply_one(db, sid, d["content"], operation, who, require_issued)
+    _check_references(db, sid, content)
     _advance(db, d, content, who)
     _audit(
         db, actor, meta, "SURVEY.DRAFT_CHANGED", "survey_definition", sid, {**summary, "revision": d["revision"] + 1}
@@ -293,6 +332,7 @@ def apply_operation(
 def apply_batch(
     db: Session, sid: uuid.UUID, markets: Sequence[str], expected_revision: int,
     operations: Sequence[Mapping[str, Any]], actor: Actor, meta: RequestMeta | None = None,
+    *, require_issued: bool = False,
 ) -> dict[str, Any]:  # fmt: skip
     """FI-1 — one SAVE: every operation, in order, as ONE revision. All or nothing: the first operation that is refused
     raises, and the caller's rollback leaves the draft, every asset and the audit trail exactly as they were. A stale
@@ -307,13 +347,14 @@ def apply_batch(
         if not isinstance(operation, Mapping):
             raise SurveyError(422, "OPERATION_INVALID", "An operation is an object", [{"operation_index": index}])
         try:
-            content, summary = _apply_one(db, sid, content, operation, who)
+            content, summary = _apply_one(db, sid, content, operation, who, require_issued)
         except SurveyError as exc:
             exc.details = [{"operation_index": index, "op": operation.get("op"), "kind": operation.get("kind")}] + list(
                 exc.details or []
             )
             raise
         summaries.append(summary)
+    _check_references(db, sid, content)
     _advance(db, d, content, who)
     counts: dict[str, int] = {}
     for s in summaries:
@@ -429,13 +470,165 @@ def load_bundle(db: Session, content: Mapping[str, Any]) -> Bundle:
     )
 
 
-def findings_of(db: Session, content: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Server validation of a content document: structural problems first, then every rule of the validator."""
+def findings_of(db: Session, content: Mapping[str, Any], sid: uuid.UUID | None = None) -> list[dict[str, Any]]:
+    """Server validation of a content document: structural problems first, then every rule of the validator, then the
+    server-governed warnings. With ``sid`` (the survey the content belongs to) also the library rules of LIB-1: a
+    reference to another survey's unpublished asset is a blocker, and a newer published revision of something pinned
+    is an INFORMATION item — never a warning, never a blocker, never an upgrade."""
     problems = check_document("SURVEY", content)
     if problems:
         return [{"code": p.code, "at": p.path, "severity": "BLOCKER", "message": p.detail or p.code} for p in problems]
     bundle = load_bundle(db, content)
-    return [f.__dict__ | {"code": f.code} for f in validate(bundle)] + governed_warnings(bundle)
+    out = [f.__dict__ | {"code": f.code} for f in validate(bundle)]
+    if sid is not None:
+        out += [
+            {
+                "code": "REFERENCE_NOT_PUBLISHED",
+                "at": f"{e['kind']}:{e['code']}@{e['version']}",
+                "severity": "BLOCKER",
+                "message": f"{e['kind']} {e['code']} version {e['version']} belongs to another survey and is not in a "
+                "published version: it cannot be used here",
+            }
+            for e in foreign_unpublished(db, sid, bundle)
+        ]  # fmt: skip
+    out += governed_warnings(bundle)
+    if sid is not None:
+        out += newer_revisions(db, sid, bundle)
+    return out
+
+
+# ------------------------------------------------------------------------------ LIB-1: what may be reused, and by whom
+PUBLISHED_VERSION_EVENTS = ("PUBLISHED", "SUPERSEDED")  # a version that was published; a withdrawn one is not a source
+
+
+def published_versions(db: Session, markets: Sequence[str]) -> list[dict[str, Any]]:
+    """Every survey version that was published, in the given markets, with its manifest. AUTHORITATIVE: read from the
+    immutable versions and candidates themselves, never from the derived usage index."""
+    rows = _all(
+        db,
+        "SELECT v.id AS version_id, v.label, v.version_no, v.created_at, v.created_by, d.id AS survey_id, "
+        "d.code AS survey_code, d.name AS survey_name, d.market_code, c.manifest, "
+        "(SELECT e.event FROM survey_lifecycle_event e WHERE e.subject_id = v.id ORDER BY e.seq DESC LIMIT 1) AS event "
+        "FROM survey_version v JOIN survey_candidate c ON c.id = v.candidate_id "
+        "JOIN survey_definition d ON d.id = v.survey_definition_id WHERE d.market_code = ANY(:m) "
+        "ORDER BY d.code, v.version_no",
+        m=list(markets),
+    )
+    return [r for r in rows if r["event"] in PUBLISHED_VERSION_EVENTS]
+
+
+def published_index(db: Session, markets: Sequence[str]) -> dict[tuple[str, str, int], list[dict[str, Any]]]:
+    """(kind, code, version) → the published versions that pin it. An asset is REUSABLE across surveys if and only if
+    it is a key of this index (owner decision LIB-D-1): drafts, rejected and never-published candidates are not."""
+    index: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    for v in published_versions(db, markets):
+        for e in v["manifest"]:
+            index.setdefault((e["kind"], e["code"], int(e["version"])), []).append(v)
+    return index
+
+
+def foreign_unpublished(db: Session, sid: uuid.UUID, bundle: Bundle) -> list[dict[str, Any]]:
+    """The asset versions a content pins that this survey neither owns nor may reuse."""
+    market = _one(db, "SELECT market_code FROM survey_definition WHERE id = :i", i=sid)
+    index: dict[tuple[str, str, int], list[dict[str, Any]]] | None = None
+    bad = []
+    for e in manifest_of(bundle):
+        owner = _one(
+            db,
+            "SELECT owner_definition_id FROM survey_asset_version WHERE kind = :k AND code = :c AND version = :v",
+            k=e["kind"], c=e["code"], v=e["version"],
+        )  # fmt: skip
+        if owner and owner["owner_definition_id"] == sid:
+            continue
+        if index is None:
+            index = published_index(db, [market["market_code"]] if market else [])
+        if (e["kind"], e["code"], int(e["version"])) not in index:
+            bad.append(e)
+    return bad
+
+
+def _check_references(db: Session, sid: uuid.UUID, content: Mapping[str, Any]) -> None:
+    """A draft must never ACQUIRE a reference to another survey's unpublished asset: refused when it is saved, whatever
+    client sent it."""
+    if check_document("SURVEY", content):
+        return
+    bad = foreign_unpublished(db, sid, load_bundle(db, content))
+    if bad:
+        raise SurveyError(
+            422,
+            "REFERENCE_NOT_PUBLISHED",
+            f"{len(bad)} referenced version(s) belong to another survey and are not in a published version",
+            [{"kind": e["kind"], "code": e["code"], "version": e["version"]} for e in bad],
+        )
+
+
+def newer_revisions(db: Session, sid: uuid.UUID, bundle: Bundle) -> list[dict[str, Any]]:
+    """INFORMATION only (owner decision LIB-D-5): something this content pins has a newer PUBLISHED revision. The pin
+    is never changed for the author, and this never blocks or invalidates anything."""
+    market = _one(db, "SELECT market_code FROM survey_definition WHERE id = :i", i=sid)
+    index = published_index(db, [market["market_code"]] if market else [])
+    latest: dict[tuple[str, str], int] = {}
+    for kind, code, version in index:
+        latest[(kind, code)] = max(latest.get((kind, code), 0), version)
+    out = []
+    for e in manifest_of(bundle):
+        if e["kind"] == "WORDING":
+            continue
+        newest = latest.get((e["kind"], e["code"]), 0)
+        if newest > int(e["version"]):
+            out.append(
+                {
+                    "code": "NEWER_REVISION_PUBLISHED", "at": f"{e['kind']}:{e['code']}@{e['version']}",
+                    "severity": "INFO",
+                    "message": f"{e['kind']} {e['code']} is pinned at version {e['version']}; version {newest} has "
+                    "been published. Nothing is upgraded for you, and nothing is blocked.",
+                }
+            )  # fmt: skip
+    return out
+
+
+CODE_PREFIX = {"MODULE": "M", "ITEM": "Q", "STATEMENT": "S", "CONDITION": "C", "OPTION_SET": "OS"}
+MAX_CODES = 60
+
+
+def issue_codes(
+    db: Session, sid: uuid.UUID, markets: Sequence[str], requests: Sequence[Mapping[str, Any]], actor: Actor,
+    meta: RequestMeta | None = None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """New, permanent, globally unique asset codes for one survey. The number comes from a database sequence, which
+    never returns a value twice — not to two concurrent requests, and not after a request that was rolled back — and
+    every issued code is recorded under a primary key. A code that any asset already carries is skipped, so a
+    historical code is never issued. ``kind`` STATEMENT is an ITEM whose code starts with S, by convention."""
+    survey(db, sid, markets)
+    wanted: list[tuple[str, str]] = []
+    for r in requests:
+        kind, count = str(r.get("kind")), r.get("count", 1)
+        if kind not in CODE_PREFIX or not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise SurveyError(
+                422, "OPERATION_INVALID", "Ask for a count of MODULE, ITEM, STATEMENT, CONDITION or OPTION_SET"
+            )
+        wanted += [(kind, "ITEM" if kind == "STATEMENT" else kind)] * count
+    if not 1 <= len(wanted) <= MAX_CODES:
+        raise SurveyError(422, "OPERATION_INVALID", f"Ask for 1 to {MAX_CODES} codes at a time")
+    who, out = _ref(actor), []
+    for asked, stored in wanted:
+        while True:
+            n = db.execute(text("SELECT nextval('survey_code_seq')")).scalar_one()
+            code = f"{CODE_PREFIX[asked]}-{n}"
+            if not _one(db, "SELECT 1 AS x FROM survey_asset_version WHERE code = :c LIMIT 1", c=code):
+                break
+        db.execute(
+            text(
+                "INSERT INTO survey_issued_code (code, kind, survey_definition_id, issued_by) VALUES (:c, :k, :s, :by)"
+            ),
+            {"c": code, "k": stored, "s": sid, "by": who},
+        )
+        out.append({"kind": asked, "code": code})
+    _audit(
+        db, actor, meta, "SURVEY.CODES_ISSUED", "survey_definition", sid,
+        {"count": len(out), "codes": [o["code"] for o in out]},
+    )  # fmt: skip
+    return out
 
 
 #: FI-2 (owner decision FI2-D-1) — warnings the SERVER governs. Each has a stable code; each must be acknowledged,
@@ -514,7 +707,7 @@ def submit(
     survey(db, sid, markets)
     d = draft(db, sid, lock=True)
     content = d["content"]
-    findings = findings_of(db, content)
+    findings = findings_of(db, content, sid)
     blockers = [f for f in findings if f["severity"] == "BLOCKER"]
     if blockers:
         raise SurveyError(
@@ -850,7 +1043,7 @@ def candidate_documents(db: Session, cand: Mapping[str, Any], actor: Actor) -> d
     approver = approver_of(db, cand["id"])
     names = _names(db, [*cand["makers"], cand["submitted_by"], *([approver] if approver else [])])
     problems = manifest_problems(db, cand)
-    findings = findings_of(db, cand["content"])
+    findings = findings_of(db, cand["content"], cand["survey_definition_id"])
     v = _one(db, "SELECT id, label FROM survey_version WHERE candidate_id = :c", c=cand["id"])
     return {
         "id": cand["id"], "survey_id": cand["survey_definition_id"], "survey_code": cand["survey_code"],
@@ -921,6 +1114,227 @@ def survey_history(db: Session, sid: uuid.UUID) -> dict[str, Any]:
             }
             for v in vers
         ],
+    }  # fmt: skip
+
+
+# ------------------------------------------------------------------------------- LIB-1: the component library, read
+COMPONENT_KINDS = ("MODULE", "ITEM", "CONDITION", "OPTION_SET")
+
+
+def _doc(db: Session, kind: str, code: str, version: int) -> dict[str, Any] | None:
+    return _one(
+        db,
+        "SELECT kind, code, version, state, sha256, content, owner_definition_id FROM survey_asset_version "
+        "WHERE kind = :k AND code = :c AND version = :v",
+        k=kind, c=code, v=version,
+    )  # fmt: skip
+
+
+def _usage(db: Session, markets: Sequence[str], kind: str, code: str, version: int) -> dict[str, int]:
+    """How widely a version is used — from the DERIVED usage index (never the source of truth for anything else)."""
+    row = _one(
+        db,
+        "SELECT count(*) AS versions, count(DISTINCT v.survey_definition_id) AS surveys "
+        "FROM survey_asset_usage u JOIN survey_version v ON v.id = u.subject_id "
+        "JOIN survey_definition d ON d.id = v.survey_definition_id "
+        "WHERE u.subject_type = 'VERSION' AND u.kind = :k AND u.code = :c AND u.version = :v "
+        "AND d.market_code = ANY(:m)",
+        k=kind, c=code, v=version, m=list(markets),
+    )  # fmt: skip
+    return {"versions": int(row["versions"]) if row else 0, "surveys": int(row["surveys"]) if row else 0}
+
+
+def _sources(pins: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "survey_id": v["survey_id"], "survey_code": v["survey_code"], "survey_name": v["survey_name"],
+            "version_id": v["version_id"], "version_label": v["label"], "version_status": v["event"],
+        }
+        for v in pins
+    ]  # fmt: skip
+
+
+def _module_pairs(db: Session, index: Mapping[tuple[str, str, int], Any]) -> dict[tuple[str, int], set[int]]:
+    """(item code, item version) → the wording versions it is published with, from the published modules."""
+    pairs: dict[tuple[str, int], set[int]] = {}
+    for kind, code, version in index:
+        if kind != "MODULE":
+            continue
+        row = _doc(db, "MODULE", code, version)
+        for n in row["content"].get("nodes", []) if row else []:
+            ref = n.get("item")
+            if isinstance(ref, dict):
+                pairs.setdefault((str(ref.get("code")), int(ref.get("version") or 0)), set()).add(
+                    int(ref.get("wording_version") or 0)
+                )
+    return pairs
+
+
+def _summary(
+    db: Session, kind: str, doc: Mapping[str, Any], wording: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """What a person recognises a component by. Only what the documents themselves say: nothing is invented."""
+    if kind == "MODULE":
+        nodes = doc.get("nodes", [])
+        return {
+            "title": str(doc.get("name") or doc.get("code")),
+            "description": str((doc.get("authoring") or {}).get("intent") or ""),
+            "category": str(doc.get("kind") or "COMMON"),
+            "facts": {
+                "questions": sum(n.get("type") == "QUESTION" for n in nodes),
+                "statements": sum(n.get("type") == "STATEMENT" for n in nodes),
+                "decisions": sum(n.get("type") == "DECISION" for n in nodes),
+                "outcomes": list(doc.get("outcomes", [])),
+            },
+        }
+    if kind == "ITEM":
+        return {
+            "title": str((wording or {}).get("text") or doc.get("intent") or doc.get("code")),
+            "description": str(doc.get("intent") or ""),
+            "category": str(doc.get("answer_type")),
+            "facts": {
+                "answer_type": doc.get("answer_type"), "option_set": doc.get("option_set"),
+                "statement_role": doc.get("statement_role"), "lifecycle_role": doc.get("lifecycle_role"),
+                "response_obligation": doc.get("response_obligation"),
+                "delivery_mode": (wording or {}).get("delivery_mode"),
+            },
+        }  # fmt: skip
+    if kind == "CONDITION":
+        return {
+            "title": str(doc.get("name") or doc.get("code")),
+            "description": "",
+            "category": "CONDITION",
+            "facts": {
+                "fields": sorted(fields_of(doc.get("ast") or {})),
+                "params": doc.get("params") or {},
+                "inputs": doc.get("inputs") or {},
+            },
+        }
+    options = doc.get("options", [])
+    return {
+        "title": " / ".join(str(o.get("label") or o.get("code")) for o in options),
+        "description": "",
+        "category": "OPTION_SET",
+        "facts": {
+            "options": len(options),
+            "exclusive": [o["code"] for o in options if o.get("exclusive")],
+            "other": [o["code"] for o in options if o.get("is_other")],
+        },
+    }
+
+
+def components(db: Session, markets: Sequence[str], kind: str, query: str = "") -> list[dict[str, Any]]:
+    """The reusable library: PUBLISHED versions of one kind in the reader's markets (LIB-D-1), newest first per code."""
+    if kind not in COMPONENT_KINDS:
+        raise SurveyError(404, "NOT_FOUND", "Unknown kind of component")
+    index = published_index(db, markets)
+    latest: dict[str, int] = {}
+    for k, code, version in index:
+        if k == kind:
+            latest[code] = max(latest.get(code, 0), version)
+    pairs = _module_pairs(db, index) if kind == "ITEM" else {}
+    out = []
+    for (k, code, version), pins in sorted(index.items()):
+        if k != kind:
+            continue
+        row = _doc(db, kind, code, version)
+        if not row:
+            continue
+        wording_versions: list[int | None] = [None]
+        if kind == "ITEM" and pairs.get((code, version)):
+            wording_versions = [*sorted(pairs[(code, version)])]
+        for wv in wording_versions:
+            wrow = _doc(db, "WORDING", code, wv) if wv else None
+            entry = {
+                "kind": kind, "code": code, "version": version, "sha256": row["sha256"], "wording_version": wv,
+                **_summary(db, kind, row["content"], wrow["content"] if wrow else None),
+                "published_in": _sources(pins), "used_by": _usage(db, markets, kind, code, version),
+                "latest_published_version": latest[code], "is_latest": latest[code] == version,
+            }  # fmt: skip
+            out.append(entry)
+    q = query.strip().lower()
+    if q:
+        out = [
+            e for e in out
+            if q in e["title"].lower() or q in e["description"].lower() or q in e["code"].lower()
+            or any(q in s["survey_name"].lower() for s in e["published_in"])
+        ]  # fmt: skip
+    return sorted(out, key=lambda e: (e["title"].lower(), e["code"], -e["version"]))
+
+
+def component(
+    db: Session, markets: Sequence[str], kind: str, code: str, version: int, wording_version: int | None = None
+) -> dict[str, Any]:
+    """One published component, complete: its document, every document it depends on (so it can be previewed and
+    placed exactly as published), its published revisions, where it is used and where it came from."""
+    if kind not in COMPONENT_KINDS:
+        raise SurveyError(404, "NOT_FOUND", "Unknown kind of component")
+    index = published_index(db, markets)
+    pins = index.get((kind, code, version))
+    row = _doc(db, kind, code, version)
+    if not pins or not row:
+        # not published in the reader's markets: it does not exist for them, whatever its real state
+        raise SurveyError(404, "NOT_FOUND", "No such published component")
+    doc = row["content"]
+    wanted: list[tuple[str, str, int]] = []
+
+    def want_item(item_code: str, item_version: int, wv: int | None) -> None:
+        wanted.append(("ITEM", item_code, item_version))
+        if wv:
+            wanted.append(("WORDING", item_code, wv))
+        irow = _doc(db, "ITEM", item_code, item_version)
+        ref = (irow["content"].get("option_set") or {}) if irow else {}
+        if ref.get("code"):
+            wanted.append(("OPTION_SET", str(ref["code"]), int(ref.get("version") or 0)))
+
+    if kind == "MODULE":
+        for n in doc.get("nodes", []):
+            if n.get("type") == "DECISION":
+                c = (n.get("binding") or {}).get("condition") or {}
+                if c.get("code"):
+                    wanted.append(("CONDITION", str(c["code"]), int(c.get("version") or 0)))
+            elif isinstance(n.get("item"), dict):
+                want_item(
+                    str(n["item"].get("code")), int(n["item"].get("version") or 0), n["item"].get("wording_version")
+                )
+    elif kind == "ITEM":
+        pairs = _module_pairs(db, index).get((code, version), set())
+        if wording_version is None and len(pairs) == 1:
+            wording_version = next(iter(pairs))
+        if wording_version not in pairs:
+            raise SurveyError(404, "NOT_FOUND", "This question is not published with that wording version")
+        wanted.append(("WORDING", code, wording_version))
+        ref = doc.get("option_set") or {}
+        if ref.get("code"):
+            wanted.append(("OPTION_SET", str(ref["code"]), int(ref.get("version") or 0)))
+    dependencies, missing = [], []
+    for k, c, v in dict.fromkeys(wanted):
+        drow = _doc(db, k, c, v)
+        if not drow or (k, c, v) not in index:
+            missing.append({"kind": k, "code": c, "version": v})
+            continue
+        dependencies.append(
+            {"kind": k, "code": c, "version": v, "sha256": drow["sha256"], "document": drow["content"]}
+        )  # fmt: skip
+    wdoc = next((d["document"] for d in dependencies if d["kind"] == "WORDING" and d["code"] == code), None)
+    revisions = [
+        {"version": v, "sha256": (_doc(db, kind, code, v) or {}).get("sha256", ""), "published_in": _sources(p)}
+        for (k, c, v), p in sorted(index.items())
+        if k == kind and c == code
+    ]
+    fields: set[str] = set()
+    for d in [{"kind": kind, "document": doc}, *dependencies]:
+        if d["kind"] == "CONDITION":
+            fields |= set(fields_of(d["document"].get("ast") or {}))
+    return {
+        "kind": kind, "code": code, "version": version, "sha256": row["sha256"], "wording_version": wording_version,
+        **_summary(db, kind, doc, wdoc if kind == "ITEM" else None),
+        "document": doc, "dependencies": dependencies, "missing_dependencies": missing,
+        "revisions": revisions, "published_in": _sources(pins), "used_by": _usage(db, markets, kind, code, version),
+        "latest_published_version": max(r["version"] for r in revisions),
+        "is_latest": max(r["version"] for r in revisions) == version,
+        "requires": {"fields": sorted(fields)},
+        "derived_from": (doc.get("authoring") or {}).get("derived_from"),
     }  # fmt: skip
 
 

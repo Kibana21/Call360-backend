@@ -72,12 +72,13 @@ def _ref(v: Any) -> bool:
 
 
 #: kind -> (required fields, optional fields); each field has one structural check.
-#: ``authoring`` (FI-1, optional, on ITEM, MODULE and CONDITION): notes an editor keeps with the document — a module's
-#: stated intent and recommended entry rule, a condition's parameter labels, the wording version of an unplaced item.
+#: ``authoring`` (FI-1; LIB-1 adds OPTION_SET, optional): notes an editor keeps with the document — a module's
+#: stated intent and recommended entry rule, a condition's parameter labels, the wording version of an unplaced item,
+#: and ``derived_from`` — the published version a local copy was made from (provenance only).
 #: It is part of the document and of its hash, and it has NO execution meaning: no validator rule, condition or route
 #: reads it. A document without it is unchanged.
 _CONTRACT: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
-    "OPTION_SET": ({"schema": _str, "code": _str, "version": _posint, "options": _arr}, {}),
+    "OPTION_SET": ({"schema": _str, "code": _str, "version": _posint, "options": _arr}, {"authoring": _obj}),
     "ITEM": (
         {"schema": _str, "code": _str, "version": _posint, "answer_type": _one_of(*ANSWER_TYPES), "intent": _text},
         {

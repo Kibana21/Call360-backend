@@ -113,6 +113,8 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
         "survey_asset_usage",
         "survey_catalog_entry",
     ),
+    # LIB-1 server-issued asset codes: additive; unused while `survey_library_enabled` is off
+    "0028_survey_library": ("survey_issued_code",),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 

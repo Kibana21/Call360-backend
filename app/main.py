@@ -88,17 +88,27 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0027_survey_definitions"
-#: Revision 0027 (SS-03A) only ADDS tables that are used when `survey_definitions_enabled` is on. A schema still at the
-#: revision before it therefore serves the whole existing product correctly while that setting is off, and is accepted
-#: in that case only. With the setting on, the schema must be at the head.
+MIGRATION_HEAD = "0028_survey_library"
+#: Each of the last two revisions only ADDS objects that are used when its own setting is on. A schema one or two
+#: revisions behind therefore serves everything that is switched on correctly, and is accepted in exactly that case:
+#:   0027 (SS-03A, survey definitions) — needed when `survey_definitions_enabled` is on;
+#:   0028 (LIB-1, server-issued codes) — needed when `survey_library_enabled` is on.
+#: With a setting on, the schema must hold that setting's revision, or readiness fails closed.
+HEAD_BEFORE_SURVEY_LIBRARY = "0027_survey_definitions"
 HEAD_BEFORE_SURVEY_DEFINITIONS = "0026_gpt_live_provider"
 
 
+def survey_library_on(settings: Settings) -> bool:
+    """The library needs the survey definitions it reuses: it is on only when both settings are."""
+    return settings.survey_definitions_enabled and settings.survey_library_enabled
+
+
 def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
-    if settings.survey_definitions_enabled:
+    if survey_library_on(settings):
         return (MIGRATION_HEAD,)
-    return (MIGRATION_HEAD, HEAD_BEFORE_SURVEY_DEFINITIONS)
+    if settings.survey_definitions_enabled:
+        return (MIGRATION_HEAD, HEAD_BEFORE_SURVEY_LIBRARY)
+    return (MIGRATION_HEAD, HEAD_BEFORE_SURVEY_LIBRARY, HEAD_BEFORE_SURVEY_DEFINITIONS)
 
 
 ROUTERS = (
@@ -175,6 +185,9 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
     if settings.survey_definitions_enabled:
         # SS-03A: off by default. With it off the survey routes do not exist and nothing touches the survey_* tables.
         app.include_router(survey_definitions.router)
+        if survey_library_on(settings):
+            # LIB-1: off by default. With it off the library routes do not exist and no code is issued.
+            app.include_router(survey_definitions.library_router)
     return app
 
 

@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # no survey route is registered and nothing reads or writes the survey_* tables. No live-call workflow is behind it.
     survey_definitions_enabled: bool = False
     survey_writes_per_minute: int = 240
+    # LIB-1: the reusable component library (discovery of published components across surveys, server-issued asset
+    # codes). OFF by default, and needs `survey_definitions_enabled` and migration 0028. With it off no library route
+    # is registered; the rule that a draft may only reference its own or PUBLISHED assets applies either way.
+    survey_library_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

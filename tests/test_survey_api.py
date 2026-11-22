@@ -37,6 +37,7 @@ PREFIXES = (
     "/api/v1/survey-versions",
     "/api/v1/survey-library",
     "/api/v1/survey-conditions",
+    "/api/v1/survey-components",  # LIB-1
 )
 
 
@@ -68,9 +69,8 @@ MATRIX = {
 }
 
 
-@pytest.fixture()
-def survey_app(settings: Settings, engine: Engine):  # type: ignore[no-untyped-def]
-    app = create_app(settings.model_copy(update={"survey_definitions_enabled": True, "transcription_worker": False}))
+def with_grants(app: Any) -> Any:
+    """Install the per-person test grants on an application (used by every survey API test module)."""
 
     def with_test_grants(request: Request, db: Session = Depends(get_db)) -> AuthContext:
         ctx = resolve_auth(request.app, request.cookies, db)
@@ -82,6 +82,13 @@ def survey_app(settings: Settings, engine: Engine):  # type: ignore[no-untyped-d
 
     app.dependency_overrides[authenticate] = with_test_grants
     return app
+
+
+@pytest.fixture()
+def survey_app(settings: Settings, engine: Engine):  # type: ignore[no-untyped-def]
+    return with_grants(
+        create_app(settings.model_copy(update={"survey_definitions_enabled": True, "transcription_worker": False}))
+    )
 
 
 def _client(app: Any, account: Account) -> TestClient:
@@ -412,12 +419,12 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
         if m in ("get", "post", "put", "patch", "delete")
     }
     assert set(MATRIX) <= ops
-    assert len([o for o in ops if is_survey_path(o[1])]) == 19
-    assert len(ops) == 199 + 19  # the 199 operations of the accepted contract, and these
+    assert len([o for o in ops if is_survey_path(o[1])]) == 22  # 19 with the survey setting; 3 more with the library's
+    assert len(ops) == 199 + 22  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
     assert not [k for k in schemas if "__" in k]
     survey_schemas = [k for k in schemas if k.startswith("Survey") and k not in ("SurveyRunDetail",)]
-    assert len(survey_schemas) == 35 and len(schemas) == 405 + 35  # 22 of SS-03A, 4 of FI-1, 9 of FI-2
-    assert MIGRATION_HEAD == "0027_survey_definitions"
+    assert len(survey_schemas) == 46 and len(schemas) == 405 + 46  # 22 of SS-03A, 4 of FI-1, 9 of FI-2, 11 of LIB-1
+    assert MIGRATION_HEAD == "0028_survey_library"

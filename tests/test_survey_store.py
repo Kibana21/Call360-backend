@@ -24,10 +24,11 @@ from app.domain.survey.store import SurveyError
 from tests.support import Account, make_account, migrate
 from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
-HEAD, BEFORE = "0027_survey_definitions", "0026_gpt_live_provider"
+HEAD, BEFORE = "0028_survey_library", "0026_gpt_live_provider"  # 0027 SS-03A and 0028 LIB-1 are both survey-only
 SURVEY_TABLES = {
     "survey_definition", "survey_draft", "survey_asset_version", "survey_candidate", "survey_version",
     "survey_lifecycle_event", "survey_wording_approval", "survey_asset_usage", "survey_catalog_entry",
+    "survey_issued_code",  # LIB-1, migration 0028
 }  # fmt: skip
 
 
@@ -647,3 +648,5 @@ def test_zz_downgrade_refuses_while_survey_definitions_exist(
     build_draft(db, author, "K1")
     with pytest.raises(RuntimeError, match="survey definitions exist"):
         migrate(settings, BEFORE, down=True)
+    # the library revision (0028) above it held no issued code and was rolled back before 0027 refused: put it back
+    migrate(settings, HEAD)

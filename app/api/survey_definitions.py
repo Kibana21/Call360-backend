@@ -1,7 +1,7 @@
 """SS-03A.3 — survey definition API: drafts, immutable candidates, published versions, the library and condition
-evaluation. Nineteen operations under ``/api/v1``, with "survey" vocabulary (owner decision D-166): the fifteen of
+evaluation. Twenty-two operations under ``/api/v1``, with "survey" vocabulary (owner decision D-166): the fifteen of
 SS-03A; the draft-documents read and the atomic save of FI-1; the survey history and the candidate-documents read of
-FI-2.
+FI-2; and, on ``library_router`` behind its own setting, the component library and the code issuer of LIB-1.
 
 Registered ONLY when the server setting ``survey_definitions_enabled`` is on; it is off by default. The path is
 ``/survey-definitions``: the bare plural of "survey" is a legacy route name retired by ADR-0007 and is deliberately
@@ -36,6 +36,8 @@ from app.security import csrf
 from app.security.authz import AuthContext, get_db, request_meta, require
 
 router = APIRouter(prefix="/api/v1", tags=["survey-definitions"])
+#: LIB-1 — the reusable component library. Registered only when `survey_library_enabled` (and the setting above) is on.
+library_router = APIRouter(prefix="/api/v1", tags=["survey-library"])
 _ERR: dict[int | str, dict[str, Any]] = {code: {"model": ErrorResponse} for code in (401, 403, 404, 409, 422, 429)}
 MARKET = "SG"  # Singapore-only synthetic development (D-39)
 NOTE = "Synthetic content, unapproved for operational use. No survey here is eligible for a live call."
@@ -365,6 +367,12 @@ def _markets(auth: AuthContext) -> list[str]:
     return sorted(auth.markets)
 
 
+def _library_on(request: Request) -> bool:
+    """LIB-1: with the library on, a new asset code must be one the server issued to the survey."""
+    st = request.app.state.settings
+    return bool(st.survey_definitions_enabled and st.survey_library_enabled)
+
+
 def _err(exc: store.SurveyError) -> AppError:
     return AppError(exc.status, exc.code, exc.message, details=exc.details)
 
@@ -537,8 +545,9 @@ def survey_draft_operation(
     _write(request, auth)
     try:
         store.apply_operation(
-            db, survey_id, _markets(auth), body.expected_revision, body.operation, auth.actor, request_meta(request)
-        )
+            db, survey_id, _markets(auth), body.expected_revision, body.operation, auth.actor, request_meta(request),
+            require_issued=_library_on(request),
+        )  # fmt: skip
     except store.SurveyError as exc:
         db.rollback()
         raise _err(exc) from exc
@@ -584,8 +593,9 @@ def survey_draft_save(
     _write(request, auth)
     try:
         store.apply_batch(
-            db, survey_id, _markets(auth), body.expected_revision, body.operations, auth.actor, request_meta(request)
-        )
+            db, survey_id, _markets(auth), body.expected_revision, body.operations, auth.actor, request_meta(request),
+            require_issued=_library_on(request),
+        )  # fmt: skip
     except store.SurveyError as exc:
         db.rollback()
         raise _err(exc) from exc
@@ -612,7 +622,7 @@ def survey_draft_validate(
     d = store.draft(db, survey_id)
     findings = [
         SurveyFindingOut(**{k: f[k] for k in ("code", "at", "severity", "message")})
-        for f in store.findings_of(db, d["content"])
+        for f in store.findings_of(db, d["content"], survey_id)
     ]
     db.rollback()
     return SurveyValidationOut(
@@ -865,3 +875,150 @@ def survey_condition_evaluate(
     except ConditionError as exc:
         raise AppError(422, exc.code, str(exc)) from exc
     return SurveyConditionEvaluateOut(result=ex.result, explanation=_explain(ex))
+
+
+# ------------------------------------------------------------------------------------------- LIB-1: component library
+class SurveyComponentSource(BaseModel):
+    survey_id: uuid.UUID
+    survey_code: str
+    survey_name: str
+    version_id: uuid.UUID
+    version_label: str
+    version_status: str
+
+
+class SurveyComponentUsage(BaseModel):
+    surveys: int = Field(description="Surveys with a published version that pins this exact version.")
+    versions: int = Field(description="Published versions that pin this exact version.")
+
+
+class SurveyComponentOut(BaseModel):
+    kind: Literal["MODULE", "ITEM", "CONDITION", "OPTION_SET"]
+    code: str
+    version: int
+    sha256: str
+    wording_version: int | None = Field(description="ITEM only: the wording version it is published with.")
+    title: str
+    description: str
+    category: str
+    facts: dict[str, Any]
+    published_in: list[SurveyComponentSource]
+    used_by: SurveyComponentUsage
+    latest_published_version: int
+    is_latest: bool
+
+
+class SurveyComponentList(BaseModel):
+    kind: str
+    items: list[SurveyComponentOut]
+    note: str = NOTE
+
+
+class SurveyComponentDocument(BaseModel):
+    kind: str
+    code: str
+    version: int
+    sha256: str
+    document: dict[str, Any]
+
+
+class SurveyComponentRevision(BaseModel):
+    version: int
+    sha256: str
+    published_in: list[SurveyComponentSource]
+
+
+class SurveyComponentDetail(SurveyComponentOut):
+    document: dict[str, Any]
+    dependencies: list[SurveyComponentDocument]
+    missing_dependencies: list[dict[str, Any]]
+    revisions: list[SurveyComponentRevision]
+    requires: dict[str, Any]
+    derived_from: dict[str, Any] | None
+    note: str = NOTE
+
+
+class SurveyCodeRequest(BaseModel):
+    kind: Literal["MODULE", "ITEM", "STATEMENT", "CONDITION", "OPTION_SET"]
+    count: int = Field(default=1, ge=1, le=store.MAX_CODES)
+
+
+class SurveyCodesIn(BaseModel):
+    requests: list[SurveyCodeRequest] = Field(min_length=1, max_length=5)
+
+
+class SurveyIssuedCode(BaseModel):
+    kind: str
+    code: str
+
+
+class SurveyCodesOut(BaseModel):
+    codes: list[SurveyIssuedCode]
+
+
+@library_router.get(
+    "/survey-components", response_model=SurveyComponentList, operation_id="survey_component_list", responses=_ERR
+)
+def survey_component_list(
+    kind: Literal["MODULE", "ITEM", "CONDITION", "OPTION_SET"],
+    q: str = "",
+    auth: AuthContext = Depends(require(READ)),
+    db: Session = Depends(get_db),
+) -> SurveyComponentList:
+    """LIB-1 — the reusable library: versions of one kind that a PUBLISHED survey version pins, in the reader's markets.
+    A draft, a rejected or a never-published candidate's assets are not here, whoever asks."""
+    return SurveyComponentList(
+        kind=kind, items=[SurveyComponentOut(**c) for c in store.components(db, _markets(auth), kind, q[:200])]
+    )
+
+
+@library_router.get(
+    "/survey-components/{kind}/{code}/{version}",
+    response_model=SurveyComponentDetail,
+    operation_id="survey_component_get",
+    responses=_ERR,
+)
+def survey_component_get(
+    kind: Literal["MODULE", "ITEM", "CONDITION", "OPTION_SET"],
+    code: str,
+    version: int,
+    wording_version: int | None = None,
+    auth: AuthContext = Depends(require(READ)),
+    db: Session = Depends(get_db),
+) -> SurveyComponentDetail:
+    """LIB-1 — one published component, complete: its document, every published document it depends on, its published
+    revisions, where it is used and what it was derived from. A component that is not published in the reader's
+    markets does not exist for them."""
+    try:
+        return SurveyComponentDetail(**store.component(db, _markets(auth), kind, code, version, wording_version))
+    except store.SurveyError as exc:
+        raise _err(exc) from exc
+
+
+@library_router.post(
+    "/survey-definitions/{survey_id}/codes",
+    response_model=SurveyCodesOut,
+    status_code=201,
+    operation_id="survey_codes_issue",
+    responses=_ERR,
+)
+@csrf_protected
+def survey_codes_issue(
+    survey_id: uuid.UUID,
+    body: SurveyCodesIn,
+    request: Request,
+    auth: AuthContext = Depends(require(EDIT)),
+    db: Session = Depends(get_db),
+) -> SurveyCodesOut:
+    """LIB-1 — new permanent, globally unique asset codes for this survey, issued by the server. With the library on,
+    a new module, question, condition or option set can only be saved under a code issued here."""
+    _write(request, auth)
+    try:
+        codes = store.issue_codes(
+            db, survey_id, _markets(auth), [r.model_dump() for r in body.requests], auth.actor, request_meta(request)
+        )
+    except store.SurveyError as exc:
+        db.rollback()
+        raise _err(exc) from exc
+    db.commit()
+    return SurveyCodesOut(codes=[SurveyIssuedCode(**c) for c in codes])

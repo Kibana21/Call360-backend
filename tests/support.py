@@ -43,6 +43,14 @@ def reset_test_schema(engine: Engine, settings: Settings) -> None:
         )
         for f in funcs:
             conn.exec_driver_sql(f"DROP FUNCTION IF EXISTS {f} CASCADE")
+        # LIB-1 (migration 0028) is the first revision with a sequence that no table owns: drop those as well
+        sequences = (
+            conn.execute(text("SELECT sequencename FROM pg_sequences WHERE schemaname = 'call360_test'"))
+            .scalars()
+            .all()
+        )
+        for q in sequences:
+            conn.exec_driver_sql(f'DROP SEQUENCE IF EXISTS call360_test."{q}" CASCADE')
         conn.commit()
     migrate(settings, "head")
 

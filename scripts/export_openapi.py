@@ -27,6 +27,7 @@ def render() -> str:
         # SS-03A: the contract documents the survey-definition operations so the client is typed for them. A running
         # server registers them only when this setting is on, and it is OFF by default.
         survey_definitions_enabled=True,
+        survey_library_enabled=True,  # LIB-1: documented in the contract; registered only when both settings are on
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
