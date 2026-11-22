@@ -34,6 +34,9 @@ SG = (
     ("E2E_SURVEY_ALL", "E2E every survey permission", "E2E_SURVEY_ALL_SG", "e2e.survey.everything", "E2E Every Permission", ("survey.read", "survey.edit", "survey.approve", "survey.publish")),
     # SS-03B closure: simulation is a permission of its own. The reader above does NOT hold it.
     ("E2E_SURVEY_SIMULATOR", "E2E survey simulator", "E2E_SURVEY_SIMULATOR_SG", "e2e.survey.simulator", "E2E Survey Simulator", ("survey.read", "survey.simulate", ASG, EVR, EVL)),
+    # NAV-1: one person who may READ across the whole platform — Survey Studio, the script-side rule editors and the
+    # operational Review Workbench — to walk the consolidated navigation in one session. No permission to change anything.
+    ("E2E_PLATFORM_READER", "E2E platform reader", "E2E_PLATFORM_READER_SG", "e2e.survey.platform", "E2E Platform Reader", ("survey.read", "survey.simulate", ASG, EVR, "script.read", "queue.read", "case.read")),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (

@@ -504,6 +504,9 @@ class SurveyWorkspaceOut(BaseModel):
     inventory: dict[str, Any] = Field(
         description="Counts of surveys by derived status and, when the library is on, of published reusable components by kind."  # noqa: E501
     )
+    surveys: list[dict[str, Any]] = Field(
+        description="Every survey of the reader's markets with what its current draft holds — modules, questions, statements, decisions, conditional entries, whether anything branches — and when it was last saved and last published. Counted from the draft's own documents; nothing is executed."  # noqa: E501
+    )
     recent_drafts: list[dict[str, Any]] = Field(description="Drafts most recently saved, newest first.")
     recent_published: list[dict[str, Any]] = Field(description="Survey versions most recently published, newest first.")
     awaiting_you: list[dict[str, Any]] = Field(
@@ -610,8 +613,37 @@ def survey_workspace_get(
                     key=lambda i: (-i["used_by"]["surveys"], i["title"].lower()),
                 )[:6]
         inventory["components"] = kinds
+    saved = {d["sid"]: d for d in drafts}
+    last_published: dict[Any, dict[str, Any]] = {}
+    for v in versions:  # newest first
+        last_published.setdefault(v["sid"], v)
+    overview = []
+    for r in rows:
+        content = store.draft(db, r["id"])["content"] or {}
+        totals = {"modules": 0, "questions": 0, "statements": 0, "decisions": 0, "conditional_entries": 0}
+        branching = False
+        for inst in content.get("sequence") or []:
+            totals["modules"] += 1
+            if ((inst.get("entry") or {}).get("binding") or {}).get("condition"):
+                totals["conditional_entries"] += 1
+                branching = True
+            ref_ = inst.get("module") or {}
+            doc = store._doc(db, "MODULE", str(ref_.get("code")), int(ref_.get("revision") or 0))  # noqa: SLF001
+            if doc:
+                nodes = doc["content"].get("nodes", [])
+                for key, kind in (("questions", "QUESTION"), ("statements", "STATEMENT"), ("decisions", "DECISION")):
+                    totals[key] += sum(n.get("type") == kind for n in nodes)
+                branching = branching or store.module_branches(doc["content"])
+        overview.append(
+            {
+                **ref(r), **totals, "branching": branching, "draft_revision": saved[r["id"]]["revision"],
+                "saved_at": saved[r["id"]]["updated_at"],
+                "published_at": last_published[r["id"]]["created_at"] if r["id"] in last_published else None,
+                "latest_version_label": last_published[r["id"]]["label"] if r["id"] in last_published else None,
+            }
+        )  # fmt: skip
     return SurveyWorkspaceOut(
-        markets=markets, library_enabled=library_on, inventory=inventory,
+        markets=markets, library_enabled=library_on, inventory=inventory, surveys=overview,
         recent_drafts=[
             {**ref(by_id[d["sid"]]), "draft_revision": d["revision"], "saved_at": d["updated_at"], "saved_by_you": d["updated_by"] == who, "ever_published": d["sid"] in published}  # noqa: E501
             for d in drafts[:6]

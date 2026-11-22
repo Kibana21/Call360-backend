@@ -69,7 +69,16 @@ def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> 
     done: list[str] = []
     now = datetime.now(UTC)
     provider = local_provider(db)
-    perms = {p.code: p for p in db.execute(select(Permission).where(Permission.code.like("survey.%"))).scalars()}
+    # the survey permissions, and any other EXISTING permission a person is explicitly given (the browser test setup
+    # gives one read-only identity `script.read` and `queue.read` to walk the whole navigation; the development
+    # identities are given survey permissions only)
+    asked = sorted({code for *_, wanted in (people or PEOPLE) for code in wanted})
+    perms = {
+        p.code: p
+        for p in db.execute(
+            select(Permission).where(Permission.code.like("survey.%") | Permission.code.in_(asked))
+        ).scalars()
+    }
     if not {"survey.read", "survey.edit", "survey.approve", "survey.publish"} <= set(perms):
         raise SystemExit(
             "Refusing: the survey permissions do not exist. Apply migration 0027_survey_definitions first."

@@ -1170,6 +1170,27 @@ def _module_pairs(db: Session, index: Mapping[tuple[str, str, int], Any]) -> dic
     return pairs
 
 
+def module_branches(doc: Mapping[str, Any]) -> bool:
+    """Does this module's own document send different answers or conditions to different places? True when it has a
+    decision, a step whose links lead to more than one destination, or rule-ordered or follow-up routing. Read from
+    the document; nothing is executed."""
+    nodes, edges = doc.get("nodes", []), doc.get("edges", [])
+    if any(n.get("type") == "DECISION" for n in nodes):
+        return True
+    for n in nodes:
+        routing = n.get("routing") or {}
+        if routing.get("rules") or routing.get("followups") or routing.get("interrupts"):
+            return True
+        targets = {canonical_key(e.get("to")) for e in edges if e.get("from") == n.get("node")}
+        if len(targets) > 1:
+            return True
+    return False
+
+
+def canonical_key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
+
+
 def _summary(
     db: Session, kind: str, doc: Mapping[str, Any], wording: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -1185,6 +1206,7 @@ def _summary(
                 "statements": sum(n.get("type") == "STATEMENT" for n in nodes),
                 "decisions": sum(n.get("type") == "DECISION" for n in nodes),
                 "outcomes": list(doc.get("outcomes", [])),
+                "branching": module_branches(doc),
             },
         }
     if kind == "ITEM":

@@ -64,6 +64,22 @@ def test_the_workspace_counts_what_exists_and_says_what_awaits_each_person(
         inv["components"]["ITEM"]["questions"] + inv["components"]["ITEM"]["statements"]
         == inv["components"]["ITEM"]["components"]
     )
+    # every survey with what its draft holds, counted from its own documents
+    by_code = {x["survey_code"]: x for x in w["surveys"]}
+    assert len(w["surveys"]) == inv["surveys"]["total"] and by_code[b_code]["modules"] == 1
+    source = draft(author, a_sid)
+    nodes = [n for a in source["assets"] if a["kind"] == "MODULE" for n in a["document"]["nodes"]]
+    assert (by_code[a_code]["modules"], by_code[a_code]["questions"]) == (
+        len(source["content"]["sequence"]),
+        sum(n["type"] == "QUESTION" for n in nodes),
+    )
+    assert (
+        by_code[a_code]["latest_version_label"] == "1.0"
+        and by_code[b_code]["latest_version_label"] is None
+        and by_code[b_code]["published_at"] is None
+    )
+    module_facts = author.get("/api/v1/survey-components", params={"kind": "MODULE"}).json()["items"]
+    assert all(isinstance(m["facts"]["branching"], bool) for m in module_facts)  # read from the document, never guessed
     # recency is the records' own time, newest first
     assert w["recent_drafts"][0]["survey_code"] == b_code and w["recent_drafts"][0]["saved_by_you"] is True
     assert [d["saved_at"] for d in w["recent_drafts"]] == sorted(
