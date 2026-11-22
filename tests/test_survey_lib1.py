@@ -939,24 +939,58 @@ def test_with_the_library_setting_off_its_routes_do_not_exist_and_the_reference_
 
 def test_each_setting_demands_its_own_migration_and_no_more(settings: Settings) -> None:
     on = lambda **k: settings.model_copy(update=k)
-    assert MIGRATION_HEAD == "0028_survey_library"
-    assert acceptable_migration_heads(on()) == (
+    h34, h33, h32, h31, h30, h29, h28, h27, h26 = (
+        "0034_survey_control_policy",
+        "0033_survey_control_evaluation",
+        "0032_survey_coordinated_sim",
+        "0031_survey_assignment_groups",
+        "0030_survey_assignment",
+        "0029_survey_simulation",
         "0028_survey_library",
         "0027_survey_definitions",
         "0026_gpt_live_provider",
     )
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True)) == (
-        "0028_survey_library",
-        "0027_survey_definitions",
+    latest = (h34, h33, h32, h31, h30, h29, h28, h27, h26)
+    assert MIGRATION_HEAD == h34
+    # EVAL-2A: control policies need 0034, and are on only with evaluation
+    ev_ = on(survey_definitions_enabled=True, survey_simulation_enabled=True, survey_evaluation_enabled=True)
+    assert acceptable_migration_heads(ev_.model_copy(update={"survey_control_policy_enabled": True})) == latest[:1]
+    assert (
+        acceptable_migration_heads(ev_) == latest[:2]
+    )  # EVAL-1: evaluation needs 0033, and is on only with simulation
+    sim_ = on(survey_definitions_enabled=True, survey_simulation_enabled=True)
+    assert (
+        acceptable_migration_heads(sim_.model_copy(update={"survey_control_policy_enabled": True})) == latest[:6]
+    )  # policies without evaluation are not on
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_evaluation_enabled=True)) == latest[:8]
+    assert acceptable_migration_heads(on(survey_evaluation_enabled=True)) == latest
+    newest = latest
+    every = newest  # everything below is as it was, one revision further from the head
+    assert acceptable_migration_heads(on()) == every
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True)) == every[:8]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_library_enabled=True)) == every[:7]
+    assert acceptable_migration_heads(on(survey_library_enabled=True)) == every  # the library alone is not on
+    # SS-03B: simulation needs 0029, whatever else is on; alone (without survey definitions) it is not on
+    both = on(survey_definitions_enabled=True, survey_simulation_enabled=True)
+    assert acceptable_migration_heads(both) == every[:6]
+    assert acceptable_migration_heads(both.model_copy(update={"survey_library_enabled": True})) == every[:6]
+    assert acceptable_migration_heads(on(survey_simulation_enabled=True)) == every
+    # ASG-1: assignment needs 0030, and is on only with simulation
+    asg = both.model_copy(update={"survey_assignment_enabled": True})
+    assert acceptable_migration_heads(asg) == every[:5]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_assignment_enabled=True)) == every[:8]
+    # ASG-2A: requirement groups need 0031, and are on only with assignment
+    groups = asg.model_copy(update={"survey_assignment_groups_enabled": True})
+    assert acceptable_migration_heads(groups) == every[:4]
+    assert acceptable_migration_heads(both.model_copy(update={"survey_assignment_groups_enabled": True})) == every[:6]
+    # ASG-2B: coordinated simulation needs 0032, and is on only with requirement groups
+    assert (
+        acceptable_migration_heads(groups.model_copy(update={"survey_coordinated_simulation_enabled": True}))
+        == every[:3]
     )
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_library_enabled=True)) == (
-        "0028_survey_library",
+    assert (
+        acceptable_migration_heads(asg.model_copy(update={"survey_coordinated_simulation_enabled": True})) == every[:5]
     )
-    assert acceptable_migration_heads(on(survey_library_enabled=True)) == (
-        "0028_survey_library",
-        "0027_survey_definitions",
-        "0026_gpt_live_provider",
-    )  # the library alone is not on
 
 
 def test_zz_migration_0028_downgrades_and_upgrades_and_refuses_to_lose_issued_codes(
@@ -978,15 +1012,26 @@ def test_zz_migration_0028_downgrades_and_upgrades_and_refuses_to_lose_issued_co
 
     with engine.connect() as c:
         tables = set(c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'call360_test'")).scalars())
-    assert objects() == (True, True, "0028_survey_library")
+    assert objects() == (True, True, MIGRATION_HEAD)
     migrate(settings, "0027_survey_definitions", down=True)
     assert objects() == (False, False, "0027_survey_definitions")
     with engine.connect() as c:  # additive: every other table is exactly as it was
         assert set(
             c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'call360_test'")).scalars()
-        ) == tables - {"survey_issued_code"}
+        ) == tables - {
+            "survey_issued_code", "survey_simulation", "survey_simulation_input", "survey_call_plan",
+            "survey_assignment_binding", "survey_assignment_binding_event", "survey_assignment_evaluation",
+            "survey_assignment_simulation",
+            "survey_assignment_group", "survey_assignment_group_member", "survey_assignment_group_event",
+            "survey_composite_plan", "survey_composite_plan_member",
+            "survey_coordinated_simulation",
+            "survey_coordinated_simulation_step",
+            "survey_control_mapping", "survey_control_mapping_event", "survey_journey_evaluation",
+            "survey_control_result", "survey_evidence_observation", "survey_evaluation_finding",
+            "survey_control_policy", "survey_control_policy_event", "survey_evaluation_policy", "survey_obligation_result", "survey_obligation_observation", "survey_obligation_finding",
+        }  # fmt: skip
     migrate(settings, "head")
-    assert objects() == (True, True, "0028_survey_library")
+    assert objects() == (True, True, MIGRATION_HEAD)
     person = make_account(db, prefix="issuer")
     sid = store.create_survey(
         db, code=new_code(), name="Holds an issued code", purpose="", market="SG", actor=actor_of(person)
@@ -995,4 +1040,111 @@ def test_zz_migration_0028_downgrades_and_upgrades_and_refuses_to_lose_issued_co
     db.commit()
     with pytest.raises(RuntimeError, match="server-issued survey codes exist"):
         migrate(settings, "0027_survey_definitions", down=True)
+    # 0030 and 0029 (no governed binding, simulation records only) rolled back first; 0028 then refused and kept every issued code
     assert objects() == (True, True, "0028_survey_library")
+    migrate(settings, "head")
+    assert objects() == (True, True, MIGRATION_HEAD)
+
+
+# -------------------------------------------- the LIB-1 security correction: the legacy library list (SS-03A endpoint)
+def legacy(c: TestClient, kind: str) -> Any:
+    return c.get(f"/api/v1/survey-library/{kind}")
+
+
+def test_the_legacy_library_list_shows_only_published_reusable_versions_in_the_readers_market(
+    trio: Any, survey_app: Any, db: Session
+) -> None:
+    """``GET /survey-library/{kind}`` used to list EVERY frozen version by code and fingerprint. It now applies the same
+    rule as the component library, by direct API calls, for every kind."""
+    author, checker, _, _ = trio
+    published_sid, _, pub = build(author, "K8", "Published source")
+    drafted, _, d_map = build(author, "K1", "Only a draft")
+    in_review, _, r_map = build(author, "K7", "Frozen in a candidate, never published")
+    assert submit(author, in_review).status_code == 201
+    rejected, _, x_map = build(author, "K3", "Rejected")
+    cid = submit(author, rejected).json()["id"]
+    assert (
+        post(checker, f"/api/v1/survey-candidates/{cid}/decision", {"verdict": "REJECT", "comment": "no"}).status_code
+        == 200
+    )
+    withdrawn, _, w_map = build(author, "K4", "Withdrawn")
+    wid = submit(author, withdrawn).json()["id"]
+    assert post(author, f"/api/v1/survey-candidates/{wid}/withdraw", {"reason": "changed my mind"}).status_code == 200
+    hidden = set(d_map.values()) | set(r_map.values()) | set(x_map.values()) | set(w_map.values())
+    kinds = ("OPTION_SET", "ITEM", "WORDING", "CONDITION", "MODULE")
+
+    # the frozen-but-unpublished versions exist in the database …
+    frozen = set(db.execute(text("SELECT code FROM survey_asset_version WHERE state = 'FROZEN'")).scalars())
+    assert frozen & set(r_map.values()) and frozen & set(x_map.values()) and frozen & set(w_map.values())
+    # … and before anything is published, the legacy list shows none of these surveys' assets, of any kind
+    everything = hidden | set(pub.values())
+    for kind in kinds:
+        r = legacy(author, kind)
+        assert r.status_code == 200
+        assert not {i["code"] for i in r.json()["items"]} & everything, kind
+
+    publish(trio, published_sid)
+    seen: set[str] = set()
+    for kind in kinds:
+        items = legacy(author, kind).json()["items"]
+        codes = {i["code"] for i in items}
+        assert not codes & hidden, kind  # never a draft, an unpublished, a rejected or a withdrawn candidate's asset
+        mine = [i for i in items if i["code"] in pub.values()]
+        assert mine, kind
+        for i in mine:  # what it does list is exactly what is published, with the stored fingerprint and honest counts
+            assert (i["versions"], i["candidates"]) == (1, 1) and len(i["sha256"]) == 64
+        seen |= {i["code"] for i in mine}
+    assert seen == set(pub.values())  # every published component of the source, and nothing else of these surveys
+    # the legacy list and the component library agree on what is reusable
+    for kind in ("OPTION_SET", "ITEM", "CONDITION", "MODULE"):
+        legacy_keys = {
+            (i["code"], i["version"]) for i in legacy(author, kind).json()["items"] if i["code"] in everything
+        }
+        library_keys = {(c["code"], c["version"]) for c in lib(author, kind) if c["code"] in everything}
+        assert legacy_keys == library_keys, kind
+
+    # market: a person with every permission in another market gets an empty list; no permission, no session: refused
+    elsewhere = make_account(db, prefix="elsewhere")
+    GRANTS[elsewhere.principal_id] = ALL
+    MARKETS[elsewhere.principal_id] = frozenset({"MY"})
+    outsider = _client(survey_app, elsewhere)
+    plain = _client(survey_app, make_account(db, prefix="plain"))
+    for kind in kinds:
+        assert legacy(outsider, kind).json()["items"] == [], kind
+        assert legacy(plain, kind).status_code == 403, kind
+    with TestClient(survey_app, base_url="http://testserver") as anon:
+        assert legacy(anon, "MODULE").status_code == 401
+    assert legacy(author, "PROMPT").status_code == 422
+    for c in (outsider, plain):
+        c.__exit__(None, None, None)
+    GRANTS.pop(elsewhere.principal_id)
+    MARKETS.pop(elsewhere.principal_id)
+
+
+def test_the_legacy_library_rule_holds_with_the_library_setting_off(settings: Settings, db: Session) -> None:
+    app = with_grants(
+        create_app(settings.model_copy(update={"survey_definitions_enabled": True, "transcription_worker": False}))
+    )
+    people = [make_account(db, prefix=p) for p in ("la", "lc", "lp")]
+    for p in people:
+        GRANTS[p.principal_id] = ALL
+    author, checker, publisher = (_client(app, p) for p in people)
+    assert author.get("/api/v1/survey-components", params={"kind": "MODULE"}).status_code == 404  # the library is off
+    sid, code = empty_survey(author)
+    assert save(author, sid, 0, operations_for(fixture_bundle("K7"), code)).status_code == 200
+    cid = submit(author, sid).json()["id"]
+    own = {a["code"] for a in draft(author, sid)["assets"]}
+    for kind in ("OPTION_SET", "ITEM", "WORDING", "MODULE"):  # frozen in a candidate, not published: not listed
+        assert not {i["code"] for i in legacy(author, kind).json()["items"]} & own, kind
+    assert post(checker, f"/api/v1/survey-candidates/{cid}/decision", {"verdict": "APPROVE"}).status_code == 200
+    for kind in ("OPTION_SET", "ITEM", "WORDING", "MODULE"):  # approved is still not published
+        assert not {i["code"] for i in legacy(author, kind).json()["items"]} & own, kind
+    assert post(publisher, f"/api/v1/survey-candidates/{cid}/publish").status_code == 201
+    listed = set()
+    for kind in ("OPTION_SET", "ITEM", "WORDING", "MODULE"):
+        listed |= {i["code"] for i in legacy(author, kind).json()["items"]} & own
+    assert listed == own  # published: now listed, all of it
+    for c in (author, checker, publisher):
+        c.__exit__(None, None, None)
+    for p in people:
+        GRANTS.pop(p.principal_id)

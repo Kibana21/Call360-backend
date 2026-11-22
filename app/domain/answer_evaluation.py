@@ -44,6 +44,17 @@ METHODS = (
     "COLLECT_ONLY",
     "NARRATIVE_REVIEW",
 )
+#: SET_MATCH (EVAL-2A, owner's technical decision of 2026-11-22): a multiple-choice answer compared, as a SET, with an
+#: approved set of the question's own options. Technical answer matching only — no compliance meaning is attached.
+#: It is NOT one of ``METHODS``: those are the expected-answer policies Script Studio offers for script questions, and
+#: that list is unchanged. ``ALL_METHODS`` is what this engine can evaluate.
+SET_MODES: dict[str, str] = {
+    "INCLUDES_ALL": "every one of",
+    "INCLUDES_ANY": "at least one of",
+    "INCLUDES_NONE": "none of",
+    "EQUALS": "exactly",
+}
+ALL_METHODS = (*METHODS, "SET_MATCH")
 METHOD_ANSWER_TYPES: dict[str, tuple[str, ...]] = {
     "EXACT_BOOLEAN": ("YES_NO",),
     "ACKNOWLEDGEMENT": ("ACKNOWLEDGEMENT",),
@@ -53,9 +64,10 @@ METHOD_ANSWER_TYPES: dict[str, tuple[str, ...]] = {
     "ENUM_MATCH_POLICY_FACT": ("ENUM",),
     "COLLECT_ONLY": ("YES_NO", "NUMERIC", "ENUM", "FREE_TEXT", "ACKNOWLEDGEMENT"),
     "NARRATIVE_REVIEW": ("FREE_TEXT",),
+    "SET_MATCH": ("MULTI_SELECT",),
 }
 FACT_METHODS = ("NUMERIC_MATCH_POLICY_FACT", "ENUM_MATCH_POLICY_FACT")
-VALUE_METHODS = ("EXACT_BOOLEAN", "NUMERIC_COMPARE", "ENUM_MATCH")  # carry an approved expected value
+VALUE_METHODS = ("EXACT_BOOLEAN", "NUMERIC_COMPARE", "ENUM_MATCH", "SET_MATCH")  # carry an approved expected value
 RESULTS = (
     "MATCH",
     "MISMATCH",
@@ -144,7 +156,7 @@ def configure(
 ) -> tuple[Any, str | None]:
     """Validate an authored rule and return the stored ``(expected_value, policy_fact_key)``. Raises ``RuleInvalid``."""
     ev = dict(evaluation or {})
-    if method not in METHODS:
+    if method not in ALL_METHODS:
         raise RuleInvalid("Unknown evaluation method")
     if answer_type not in METHOD_ANSWER_TYPES[method]:
         raise RuleInvalid(_TYPE_MESSAGES.get(method, "The evaluation method does not suit this answer type"))
@@ -203,6 +215,25 @@ def configure(
         if len(accepted) == len(options):
             raise RuleInvalid("Accepting every option is not an evaluation; use collect only")
         return {"accepted": accepted}, None
+    if method == "SET_MATCH":
+        mode = ev.get("mode")
+        if mode not in SET_MODES:
+            raise RuleInvalid(f"Choose how the selection is compared ({', '.join(SET_MODES)})")
+        raw = ev.get("options")
+        if not isinstance(raw, list | tuple) or not raw or not all(isinstance(o, str) for o in raw):
+            raise RuleInvalid(
+                "Choose at least one expected option; an empty expected set is not a supported comparison"
+            )
+        expected_set = [str(o) for o in raw]
+        if len(set(expected_set)) != len(expected_set):
+            raise RuleInvalid("An expected option is listed twice; list each option once")
+        if not options:
+            raise RuleInvalid("A set comparison needs the question's published options")
+        unknown = [o for o in expected_set if o not in options]
+        if unknown:
+            raise RuleInvalid(f"Expected options must be the question's options ({', '.join(unknown)} is not)")
+        # stored in the order of the question's own option set: the comparison never depends on any order
+        return {"mode": mode, "options": [o for o in options if o in expected_set]}, None
     if method == "ENUM_MATCH_POLICY_FACT":
         fact = EVALUATION_FACTS.get(fact_key or "")
         if fact is None or fact["kind"] != "ENUM":
@@ -229,6 +260,7 @@ _TYPE_MESSAGES = {
     "ENUM_MATCH": "An expected-choice comparison needs a choice question",
     "ENUM_MATCH_POLICY_FACT": "Matching an enumerated policy fact needs a choice question",
     "NARRATIVE_REVIEW": "Narrative review needs a free-text question",
+    "SET_MATCH": "A set comparison needs a multiple-choice question",
 }
 
 
@@ -295,6 +327,8 @@ def describe_rule(r: Rule) -> str:
         return f"Expected choice: {' or '.join(e.get('accepted') or [])}"
     if r.method == "ENUM_MATCH_POLICY_FACT":
         return f"Expected choice: the policy fact {r.fact_key}"
+    if r.method == "SET_MATCH":
+        return f"Expected selection: {SET_MODES.get(str(e.get('mode')), '?')} {', '.join(e.get('options') or [])}"
     if r.method == "NARRATIVE_REVIEW":
         return "Captured for human assessment"
     return "Captured only; no expected answer"
@@ -522,6 +556,52 @@ def evaluate_one(  # noqa: PLR0911, PLR0912
             "MISMATCH",
             why + ". A mismatch is a discrepancy for review, not a breach finding",
             normalized_answer=value,
+            expected=exp,
+        )
+    if rule.method == "SET_MATCH":
+        e = dict(rule.expected or {})
+        mode, wanted = e.get("mode"), list(e.get("options") or [])
+        # an unsupported configuration is said, never evaluated
+        if (
+            mode not in SET_MODES
+            or not wanted
+            or len(set(wanted)) != len(wanted)
+            or any(o not in rule.options for o in wanted)
+        ):
+            return res(
+                "NOT_EVALUATED", "The set comparison is not a supported configuration; the selection is not evaluated"
+            )
+        if not isinstance(value, list | tuple) or not all(isinstance(v, str) for v in value):
+            return res(
+                "UNRESOLVED", f"The recorded answer {value!r} is not a selection of options; it is not evaluated"
+            )
+        chosen = [str(v) for v in value]
+        if len(set(chosen)) != len(chosen):
+            # duplicates are never collapsed on the customer's behalf: the selection is not a well-formed set
+            return res("UNRESOLVED", "An option is recorded twice in the selection; it is not evaluated")
+        foreign = [v for v in chosen if v not in rule.options]
+        if foreign:
+            return res(
+                "UNRESOLVED",
+                f"The selection contains {', '.join(foreign)}, not an approved option; it is not evaluated",
+            )
+        got_set, want_set = set(chosen), set(wanted)
+        hit = {
+            "INCLUDES_ALL": want_set <= got_set,
+            "INCLUDES_ANY": bool(got_set & want_set),
+            "INCLUDES_NONE": not (got_set & want_set),
+            "EQUALS": got_set == want_set,
+        }[str(mode)]
+        normal = [o for o in rule.options if o in got_set]  # the question's own order: no order of the answer matters
+        said = ", ".join(normal) if normal else "nothing (an explicit empty selection)"
+        why = f"Selected {said}; expected {SET_MODES[str(mode)]} {', '.join(wanted)}"
+        exp = {"mode": mode, "value": wanted, "source": "RULE"}
+        if hit:
+            return res("MATCH", why, normalized_answer=normal, expected=exp)
+        return res(
+            "MISMATCH",
+            why + ". A mismatch is a discrepancy for review, not a breach finding",
+            normalized_answer=normal,
             expected=exp,
         )
     return res("NOT_EVALUATED", f"No deterministic evaluation for method {rule.method}")

@@ -33,7 +33,13 @@ from app.api import (
     scripts,
     search,
     simulation_workbench,
+    survey_assignment_groups,
+    survey_assignments,
+    survey_control_policies,
+    survey_coordinated_simulations,
     survey_definitions,
+    survey_evaluations,
+    survey_simulations,
     voice,
     voice_lab,
 )
@@ -88,14 +94,24 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0028_survey_library"
-#: Each of the last two revisions only ADDS objects that are used when its own setting is on. A schema one or two
-#: revisions behind therefore serves everything that is switched on correctly, and is accepted in exactly that case:
-#:   0027 (SS-03A, survey definitions) — needed when `survey_definitions_enabled` is on;
-#:   0028 (LIB-1, server-issued codes) — needed when `survey_library_enabled` is on.
+MIGRATION_HEAD = "0034_survey_control_policy"
+#: Each of the last eight revisions only ADDS objects that are used when its own setting is on. A schema behind the
+#: head therefore serves everything that is switched on correctly, and is accepted in exactly that case:
+#:   0027 (SS-03A, survey definitions)        — needed when `survey_definitions_enabled` is on;
+#:   0028 (LIB-1, server-issued codes)        — needed when `survey_library_enabled` is on;
+#:   0029 (SS-03B, simulation and call plans) — needed when `survey_simulation_enabled` is on;
+#:   0030 (ASG-1, survey assignment)          — needed when `survey_assignment_enabled` is on;
+#:   0031 (ASG-2A, requirement groups)        — needed when `survey_assignment_groups_enabled` is on;
+#:   0032 (ASG-2B, coordinated simulation)    — needed when `survey_coordinated_simulation_enabled` is on.
+#:   0033 (EVAL-1, control evaluation)        — needed when `survey_evaluation_enabled` is on.
+#:   0034 (EVAL-2A, control policies)         — needed when `survey_control_policy_enabled` is on.
 #: With a setting on, the schema must hold that setting's revision, or readiness fails closed.
-HEAD_BEFORE_SURVEY_LIBRARY = "0027_survey_definitions"
-HEAD_BEFORE_SURVEY_DEFINITIONS = "0026_gpt_live_provider"
+OPTIONAL_REVISIONS = (
+    "0034_survey_control_policy", "0033_survey_control_evaluation", "0032_survey_coordinated_sim",
+    "0031_survey_assignment_groups",
+    "0030_survey_assignment", "0029_survey_simulation", "0028_survey_library", "0027_survey_definitions",
+    "0026_gpt_live_provider",
+)  # fmt: skip
 
 
 def survey_library_on(settings: Settings) -> bool:
@@ -103,12 +119,51 @@ def survey_library_on(settings: Settings) -> bool:
     return settings.survey_definitions_enabled and settings.survey_library_enabled
 
 
+def survey_simulation_on(settings: Settings) -> bool:
+    """Simulation runs published survey versions: it is on only when the survey definitions are."""
+    return settings.survey_definitions_enabled and settings.survey_simulation_enabled
+
+
+def survey_assignment_on(settings: Settings) -> bool:
+    """Selection ends in a call plan and a simulation: it is on only when simulation is."""
+    return survey_simulation_on(settings) and settings.survey_assignment_enabled
+
+
+def survey_assignment_groups_on(settings: Settings) -> bool:
+    """Requirement groups arrange the rules that single-survey assignment already reads: on only with it."""
+    return survey_assignment_on(settings) and settings.survey_assignment_groups_enabled
+
+
+def survey_coordinated_simulation_on(settings: Settings) -> bool:
+    """A coordinated simulation runs the surveys of a composite plan: on only with requirement groups."""
+    return survey_assignment_groups_on(settings) and settings.survey_coordinated_simulation_enabled
+
+
+def survey_evaluation_on(settings: Settings) -> bool:
+    """Journeys are simulations: evaluation is on only when simulation is. (A coordinated journey can only exist when
+    coordinated simulation was on; the 0033 schema holds everything it reads.)"""
+    return survey_simulation_on(settings) and settings.survey_evaluation_enabled
+
+
+def survey_control_policy_on(settings: Settings) -> bool:
+    """A control policy scopes an evaluation: on only when evaluation is."""
+    return survey_evaluation_on(settings) and settings.survey_control_policy_enabled
+
+
 def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
-    if survey_library_on(settings):
-        return (MIGRATION_HEAD,)
-    if settings.survey_definitions_enabled:
-        return (MIGRATION_HEAD, HEAD_BEFORE_SURVEY_LIBRARY)
-    return (MIGRATION_HEAD, HEAD_BEFORE_SURVEY_LIBRARY, HEAD_BEFORE_SURVEY_DEFINITIONS)
+    """The head, and every earlier revision down to the newest one that something switched on needs."""
+    needed = (
+        0 if survey_control_policy_on(settings)
+        else 1 if survey_evaluation_on(settings)
+        else 2 if survey_coordinated_simulation_on(settings)
+        else 3 if survey_assignment_groups_on(settings)
+        else 4 if survey_assignment_on(settings)
+        else 5 if survey_simulation_on(settings)
+        else 6 if survey_library_on(settings)
+        else 7 if settings.survey_definitions_enabled
+        else 8
+    )  # fmt: skip
+    return OPTIONAL_REVISIONS[: needed + 1]
 
 
 ROUTERS = (
@@ -188,6 +243,24 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
         if survey_library_on(settings):
             # LIB-1: off by default. With it off the library routes do not exist and no code is issued.
             app.include_router(survey_definitions.library_router)
+        if survey_simulation_on(settings):
+            # SS-03B: off by default. Simulation and call-plan assembly only; no route here can start a call.
+            app.include_router(survey_simulations.router)
+        if survey_assignment_on(settings):
+            # ASG-1: off by default. Synthetic applications only; nothing here assigns a survey to a customer case.
+            app.include_router(survey_assignments.router)
+        if survey_assignment_groups_on(settings):
+            # ASG-2A: off by default. Several surveys for one synthetic application; still assigns nothing.
+            app.include_router(survey_assignment_groups.router)
+        if survey_coordinated_simulation_on(settings):
+            # ASG-2B: off by default. A coordinated SIMULATION; nothing here is or starts a call.
+            app.include_router(survey_coordinated_simulations.router)
+        if survey_evaluation_on(settings):
+            # EVAL-1: off by default. Evaluation of SIMULATIONS; nothing operational is evaluated or written.
+            app.include_router(survey_evaluations.router)
+        if survey_control_policy_on(settings):
+            # EVAL-2A: off by default. Governed control policies, applicability and coverage of SIMULATED journeys.
+            app.include_router(survey_control_policies.router)
     return app
 
 

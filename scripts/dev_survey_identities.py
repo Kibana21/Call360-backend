@@ -3,7 +3,7 @@
 Creates, in the LOCAL DEVELOPMENT schema only, three synthetic people who each hold exactly what their part of the
 workflow needs, through three development-only roles:
 
-    DEV_SURVEY_AUTHOR     survey.read, survey.edit
+    DEV_SURVEY_AUTHOR     survey.read, survey.edit, survey.simulate (the last from migration 0029; simulation only)
     DEV_SURVEY_CHECKER    survey.read, survey.approve
     DEV_SURVEY_PUBLISHER  survey.read, survey.publish
 
@@ -54,11 +54,12 @@ ACCOUNTS_FILE = Path(".secrets") / "dev_survey_accounts.json"
 #: role code, role name, group code, username, display name, permissions
 PEOPLE = (
     ("DEV_SURVEY_AUTHOR", "Development survey author", "LOCAL_DEV_SURVEY_AUTHOR_SG", "dev.survey.author",
-     "Dev Survey Author", ("survey.read", "survey.edit")),
+     "Dev Survey Author",
+     ("survey.read", "survey.edit", "survey.simulate", "survey.assignment.read", "survey.evaluation.read", "survey.evaluate")),  # noqa: E501
     ("DEV_SURVEY_CHECKER", "Development survey checker", "LOCAL_DEV_SURVEY_CHECKER_SG", "dev.survey.checker",
-     "Dev Survey Checker", ("survey.read", "survey.approve")),
+     "Dev Survey Checker", ("survey.read", "survey.approve", "survey.assignment.read", "survey.evaluation.read")),
     ("DEV_SURVEY_PUBLISHER", "Development survey publisher", "LOCAL_DEV_SURVEY_PUBLISHER_SG", "dev.survey.publisher",
-     "Dev Survey Publisher", ("survey.read", "survey.publish")),
+     "Dev Survey Publisher", ("survey.read", "survey.publish", "survey.assignment.read", "survey.evaluation.read")),
 )  # fmt: skip
 
 
@@ -69,7 +70,7 @@ def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> 
     now = datetime.now(UTC)
     provider = local_provider(db)
     perms = {p.code: p for p in db.execute(select(Permission).where(Permission.code.like("survey.%"))).scalars()}
-    if set(perms) != {"survey.read", "survey.edit", "survey.approve", "survey.publish"}:
+    if not {"survey.read", "survey.edit", "survey.approve", "survey.publish"} <= set(perms):
         raise SystemExit(
             "Refusing: the survey permissions do not exist. Apply migration 0027_survey_definitions first."
         )
@@ -81,6 +82,11 @@ def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> 
             db.flush()
         held = set(db.execute(select(RolePermission.permission_id).where(RolePermission.role_id == role.id)).scalars())
         for code in wanted:
+            if code not in perms:
+                # `survey.simulate` exists from migration 0029, `survey.assignment.read` from 0030 and the two
+                # evaluation permissions from 0033 (the author may evaluate; all three may read): before them, the
+                # identity simply does not hold them
+                continue
             if perms[code].id not in held:
                 db.add(RolePermission(role_id=role.id, permission_id=perms[code].id))
         group = db.execute(select(AppGroup).where(AppGroup.code == group_code)).scalar()

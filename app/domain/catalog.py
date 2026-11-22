@@ -115,6 +115,43 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
     ),
     # LIB-1 server-issued asset codes: additive; unused while `survey_library_enabled` is off
     "0028_survey_library": ("survey_issued_code",),
+    # SS-03B simulation and call-plan records: additive; unused while `survey_simulation_enabled` is off
+    "0029_survey_simulation": ("survey_simulation", "survey_simulation_input", "survey_call_plan"),
+    # ASG-1 governed survey bindings of assignment rules and simulated selections: additive
+    "0030_survey_assignment": (
+        "survey_assignment_binding",
+        "survey_assignment_binding_event",
+        "survey_assignment_evaluation",
+        "survey_assignment_simulation",
+    ),
+    # ASG-2A requirement groups and simulated composite plans: additive
+    "0031_survey_assignment_groups": (
+        "survey_assignment_group",
+        "survey_assignment_group_member",
+        "survey_assignment_group_event",
+        "survey_composite_plan",
+        "survey_composite_plan_member",
+    ),
+    # ASG-2B coordinated simulations: additive
+    "0032_survey_coordinated_sim": ("survey_coordinated_simulation", "survey_coordinated_simulation_step"),
+    # EVAL-1 governed control mappings and journey-level evaluations of simulations: additive
+    "0033_survey_control_evaluation": (
+        "survey_control_mapping",
+        "survey_control_mapping_event",
+        "survey_journey_evaluation",
+        "survey_control_result",
+        "survey_evidence_observation",
+        "survey_evaluation_finding",
+    ),
+    # EVAL-2A governed control policies and policy-scoped evaluation results: additive, no existing table altered
+    "0034_survey_control_policy": (
+        "survey_control_policy",
+        "survey_control_policy_event",
+        "survey_evaluation_policy",
+        "survey_obligation_result",
+        "survey_obligation_observation",
+        "survey_obligation_finding",
+    ),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 

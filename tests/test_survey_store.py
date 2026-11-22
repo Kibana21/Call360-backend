@@ -24,11 +24,21 @@ from app.domain.survey.store import SurveyError
 from tests.support import Account, make_account, migrate
 from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
-HEAD, BEFORE = "0028_survey_library", "0026_gpt_live_provider"  # 0027 SS-03A and 0028 LIB-1 are both survey-only
+HEAD, BEFORE = "0034_survey_control_policy", "0026_gpt_live_provider"  # 0027 … 0034 are all survey-only
 SURVEY_TABLES = {
     "survey_definition", "survey_draft", "survey_asset_version", "survey_candidate", "survey_version",
     "survey_lifecycle_event", "survey_wording_approval", "survey_asset_usage", "survey_catalog_entry",
     "survey_issued_code",  # LIB-1, migration 0028
+    "survey_simulation", "survey_simulation_input", "survey_call_plan",  # SS-03B, migration 0029
+    "survey_assignment_binding", "survey_assignment_binding_event", "survey_assignment_evaluation",
+    "survey_assignment_simulation",  # ASG-1, migration 0030
+    "survey_assignment_group", "survey_assignment_group_member", "survey_assignment_group_event",
+    "survey_composite_plan", "survey_composite_plan_member",  # ASG-2A, migration 0031
+    "survey_coordinated_simulation", "survey_coordinated_simulation_step",  # ASG-2B, migration 0032
+    "survey_control_mapping", "survey_control_mapping_event", "survey_journey_evaluation", "survey_control_result",
+    "survey_evidence_observation", "survey_evaluation_finding",  # EVAL-1, migration 0033
+    "survey_control_policy", "survey_control_policy_event", "survey_evaluation_policy", "survey_obligation_result",
+    "survey_obligation_observation", "survey_obligation_finding",  # EVAL-2A, migration 0034
 }  # fmt: skip
 
 
@@ -75,7 +85,23 @@ def test_the_migration_is_additive_and_points_at_no_script_table(db: Session) ->
     ).all()
     out_of_survey = {(a, b) for a, b in fks if a in SURVEY_TABLES and b not in SURVEY_TABLES}
     into_survey = {(a, b) for a, b in fks if b in SURVEY_TABLES and a not in SURVEY_TABLES}
-    assert out_of_survey == set() and into_survey == set()  # no link in either direction, to scripts or anything else
+    # No link in either direction, to scripts or anything else — with ONE stated exception (ASG-1): a governed survey
+    # binding, and a simulated selection, name the exact published assignment-rule version they are about. That is a
+    # reference only: the rule table itself, its columns, triggers and rows are unchanged.
+    assert out_of_survey == {
+        ("survey_assignment_binding", "script_assignment_rule_version"),
+        ("survey_assignment_evaluation", "script_assignment_rule_version"),
+        ("survey_assignment_group_member", "script_assignment_rule_version"),  # ASG-2A: the same kind of reference
+        ("survey_composite_plan_member", "script_assignment_rule_version"),
+        # EVAL-1: a governed mapping and a control result name the control of the EXISTING register they are about, and
+        # a simulation finding names the EXISTING finding rule set version that produced it. References only.
+        ("survey_control_mapping", "control"),
+        ("survey_control_result", "control"),
+        ("survey_evaluation_finding", "finding_rule_set_version"),
+        ("survey_obligation_result", "control"),  # EVAL-2A: the same two kinds of reference, for policy-scoped results
+        ("survey_obligation_finding", "finding_rule_set_version"),
+    }
+    assert into_survey == set()
 
 
 def test_status_is_derived_no_candidate_or_version_row_carries_one(db: Session) -> None:
@@ -103,9 +129,13 @@ def test_survey_permissions_exist_and_are_granted_to_no_role(db: Session) -> Non
     ).all()
     assert [tuple(r) for r in held] == [
         ("survey.approve", 0),
+        ("survey.assignment.read", 0),  # ASG-1, migration 0030
         ("survey.edit", 0),
+        ("survey.evaluate", 0),  # EVAL-1, migration 0033
+        ("survey.evaluation.read", 0),  # EVAL-1, migration 0033
         ("survey.publish", 0),
         ("survey.read", 0),
+        ("survey.simulate", 0),  # SS-03B closure, migration 0029
     ]
 
 
@@ -558,10 +588,11 @@ def test_the_usage_index_is_derived_and_can_be_rebuilt(db: Session, people: tupl
     store.rebuild_usage(db, "VERSION", vid, list(cand["manifest"]))
     db.commit()
     assert db.execute(text(count), {"s": vid}).scalar_one() == len(cand["manifest"])
-    lib = {(r["code"], r["version"]): r for r in store.library(db, "ITEM")}
+    lib = {(r["code"], r["version"]): r for r in store.library(db, "ITEM", MARKETS)}
     assert lib[(q_clear, 1)]["versions"] == 1 and lib[(q_clear, 1)]["candidates"] == 1
+    assert store.library(db, "ITEM", ["MY"]) == []  # another market sees nothing of it
     with pytest.raises(SurveyError):
-        store.library(db, "PROMPT")
+        store.library(db, "PROMPT", MARKETS)
 
 
 def test_a_survey_outside_the_callers_markets_does_not_exist_for_them(
@@ -610,7 +641,7 @@ def test_zz_migration_downgrades_to_the_previous_head_and_upgrades_again(
             head = c.execute(text("SELECT version_num FROM call360_test.alembic_version")).scalar_one()
         return tables & SURVEY_TABLES, perms, head
 
-    assert state() == (SURVEY_TABLES, 4, HEAD)
+    assert state() == (SURVEY_TABLES, 8, HEAD)  # four of 0027, one each of 0029 and 0030, two of 0033
     with engine.connect() as c:
         others = (
             set(c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'call360_test'")).scalars())
@@ -638,7 +669,7 @@ def test_zz_migration_downgrades_to_the_previous_head_and_upgrades_again(
             == 0
         )
     migrate(settings, HEAD)
-    assert state() == (SURVEY_TABLES, 4, HEAD)
+    assert state() == (SURVEY_TABLES, 8, HEAD)  # four of 0027, one each of 0029 and 0030, two of 0033
 
 
 def test_zz_downgrade_refuses_while_survey_definitions_exist(

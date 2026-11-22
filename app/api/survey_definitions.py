@@ -838,11 +838,14 @@ def survey_version_content(
 )
 def survey_library_list(
     kind: Literal["OPTION_SET", "ITEM", "WORDING", "CONDITION", "MODULE"],
-    _auth: AuthContext = Depends(require(READ)),
+    auth: AuthContext = Depends(require(READ)),
     db: Session = Depends(get_db),
 ) -> SurveyLibraryOut:
-    """Frozen asset versions of one kind, with how many candidates and versions pin each."""
-    return SurveyLibraryOut(kind=kind, items=[SurveyLibraryItem(**r) for r in store.library(db, kind)])
+    """Published, reusable asset versions of one kind in the reader's markets, with their fingerprint and how many
+    published versions pin each. Kept for backward compatibility; since the LIB-1 security correction it never lists a
+    draft or a version that only an unpublished, rejected or withdrawn candidate pins, nor anything of another market.
+    The component library (``/survey-components``) is the full read."""
+    return SurveyLibraryOut(kind=kind, items=[SurveyLibraryItem(**r) for r in store.library(db, kind, _markets(auth))])
 
 
 @router.post(

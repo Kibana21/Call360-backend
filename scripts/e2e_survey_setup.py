@@ -21,19 +21,24 @@ from scripts import e2e_setup  # noqa: E402
 from scripts.dev_survey_identities import _create  # noqa: E402
 
 EDIT = ("survey.read", "survey.edit")
+ASG = "survey.assignment.read"  # ASG-1: reading the assignment policy is a permission of its own
+EVR, EVL = "survey.evaluation.read", "survey.evaluate"  # EVAL-1 (migration 0033): two permissions of their own
 SG = (
-    ("E2E_SURVEY_AUTHOR", "E2E survey author", "E2E_SURVEY_AUTHOR_SG", "e2e.survey.author", "E2E Survey Author", EDIT),
+    ("E2E_SURVEY_AUTHOR", "E2E survey author", "E2E_SURVEY_AUTHOR_SG", "e2e.survey.author", "E2E Survey Author", (*EDIT, ASG, EVR, EVL)),  # the author tries a policy or mapping out
     ("E2E_SURVEY_AUTHOR", "E2E survey author", "E2E_SURVEY_AUTHOR2_SG", "e2e.survey.second", "E2E Second Author", EDIT),
     ("E2E_SURVEY_READER", "E2E survey reader", "E2E_SURVEY_READER_SG", "e2e.survey.reader", "E2E Survey Reader", ("survey.read",)),
     # FI-2: a checker and a publisher who each hold only their own part, like the development identities
-    ("E2E_SURVEY_CHECKER", "E2E survey checker", "E2E_SURVEY_CHECKER_SG", "e2e.survey.checker", "E2E Survey Checker", ("survey.read", "survey.approve")),
-    ("E2E_SURVEY_PUBLISHER", "E2E survey publisher", "E2E_SURVEY_PUBLISHER_SG", "e2e.survey.publisher", "E2E Survey Publisher", ("survey.read", "survey.publish")),
+    ("E2E_SURVEY_CHECKER", "E2E survey checker", "E2E_SURVEY_CHECKER_SG", "e2e.survey.checker", "E2E Survey Checker", ("survey.read", "survey.approve", ASG, EVR)),
+    ("E2E_SURVEY_PUBLISHER", "E2E survey publisher", "E2E_SURVEY_PUBLISHER_SG", "e2e.survey.publisher", "E2E Survey Publisher", ("survey.read", "survey.publish", ASG, EVR)),
     # FI-2: one person holding ALL FOUR permissions, to show that the identity rules stop them where no permission does
     ("E2E_SURVEY_ALL", "E2E every survey permission", "E2E_SURVEY_ALL_SG", "e2e.survey.everything", "E2E Every Permission", ("survey.read", "survey.edit", "survey.approve", "survey.publish")),
+    # SS-03B closure: simulation is a permission of its own. The reader above does NOT hold it.
+    ("E2E_SURVEY_SIMULATOR", "E2E survey simulator", "E2E_SURVEY_SIMULATOR_SG", "e2e.survey.simulator", "E2E Survey Simulator", ("survey.read", "survey.simulate", ASG, EVR, EVL)),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (
     ("E2E_SURVEY_AUTHOR", "E2E survey author", "E2E_SURVEY_AUTHOR_MY", "e2e.survey.elsewhere", "E2E Other Market", EDIT),
+    ("E2E_SURVEY_SIMULATOR", "E2E survey simulator", "E2E_SURVEY_SIMULATOR_MY", "e2e.survey.simelsewhere", "E2E Simulator Other Market", ("survey.read", "survey.simulate")),
 )  # fmt: skip
 
 

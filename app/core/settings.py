@@ -66,6 +66,27 @@ class Settings(BaseSettings):
     # codes). OFF by default, and needs `survey_definitions_enabled` and migration 0028. With it off no library route
     # is registered; the rule that a draft may only reference its own or PUBLISHED assets applies either way.
     survey_library_enabled: bool = False
+    # SS-03B: server-side SIMULATION of published survey versions and call-plan assembly. OFF by default, and needs
+    # `survey_definitions_enabled` and migration 0029. Simulation only: nothing behind it can speak, dial, read an
+    # operational record or make a survey eligible for a real call.
+    survey_simulation_enabled: bool = False
+    survey_simulation_inputs_per_minute: int = 600
+    # ASG-1: selection of a published survey version by the existing governed assignment rules, for SYNTHETIC
+    # applications only. OFF by default; needs survey definitions, simulation and migration 0030. It assigns nothing
+    # to any customer case.
+    survey_assignment_enabled: bool = False
+    # ASG-2A: requirement groups (primary, additional, alternative) and composite plans of several surveys for one
+    # SYNTHETIC application. OFF by default; needs `survey_assignment_enabled` and migration 0031.
+    survey_assignment_groups_enabled: bool = False
+    # ASG-2B: a coordinated SIMULATION of every survey of one composite plan. OFF by default; needs
+    # `survey_assignment_groups_enabled` and migration 0032. Technical simulation only.
+    survey_coordinated_simulation_enabled: bool = False
+    # EVAL-1: governed control mappings and journey-level control evaluation of SIMULATIONS. OFF by default; needs
+    # `survey_simulation_enabled` and migration 0033. Synthetic journeys only; nothing operational is evaluated.
+    survey_evaluation_enabled: bool = False
+    # EVAL-2A: governed control policies, applicability and coverage of SIMULATED journeys. OFF by default; needs
+    # `survey_evaluation_enabled` and migration 0034. Establishes nothing about a real application.
+    survey_control_policy_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

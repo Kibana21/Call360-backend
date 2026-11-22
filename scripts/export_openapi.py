@@ -28,6 +28,12 @@ def render() -> str:
         # server registers them only when this setting is on, and it is OFF by default.
         survey_definitions_enabled=True,
         survey_library_enabled=True,  # LIB-1: documented in the contract; registered only when both settings are on
+        survey_simulation_enabled=True,  # SS-03B: documented in the contract; registered only when switched on
+        survey_assignment_enabled=True,  # ASG-1: likewise
+        survey_assignment_groups_enabled=True,  # ASG-2A: likewise
+        survey_coordinated_simulation_enabled=True,  # ASG-2B: likewise
+        survey_evaluation_enabled=True,  # EVAL-1: likewise
+        survey_control_policy_enabled=True,  # EVAL-2A: likewise
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

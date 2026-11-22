@@ -38,6 +38,10 @@ PREFIXES = (
     "/api/v1/survey-library",
     "/api/v1/survey-conditions",
     "/api/v1/survey-components",  # LIB-1
+    "/api/v1/survey-simulations",  # SS-03B
+    "/api/v1/survey-call-plans",  # SS-03B
+    "/api/v1/survey-assignment",  # ASG-1
+    "/api/v1/survey-evaluation",  # EVAL-1
 )
 
 
@@ -419,12 +423,24 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
         if m in ("get", "post", "put", "patch", "delete")
     }
     assert set(MATRIX) <= ops
-    assert len([o for o in ops if is_survey_path(o[1])]) == 22  # 19 with the survey setting; 3 more with the library's
-    assert len(ops) == 199 + 22  # the 199 operations of the accepted contract, and these
+    # 19 with the survey setting; 3 more with the library's; 5 more with simulation's (SS-03B)
+    # … and 10 more with assignment's (ASG-1)
+    # … and 7 more with requirement groups' (ASG-2A)
+    # … and 3 more with coordinated simulation's (ASG-2B)
+    # … and 10 more with evaluation's (EVAL-1)
+    # … and 10 more with control policies' (EVAL-2A)
+    assert len([o for o in ops if is_survey_path(o[1])]) == 67
+    assert len(ops) == 199 + 67  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
     assert not [k for k in schemas if "__" in k]
     survey_schemas = [k for k in schemas if k.startswith("Survey") and k not in ("SurveyRunDetail",)]
-    assert len(survey_schemas) == 46 and len(schemas) == 405 + 46  # 22 of SS-03A, 4 of FI-1, 9 of FI-2, 11 of LIB-1
-    assert MIGRATION_HEAD == "0028_survey_library"
+    # 22 of SS-03A, 4 of FI-1, 9 of FI-2, 11 of LIB-1, 6 of SS-03B
+    # … and 10 of ASG-1
+    # … and 8 of ASG-2A
+    # … and 2 of ASG-2B
+    # … and 13 of EVAL-1
+    # … and 15 of EVAL-2A
+    assert len(survey_schemas) == 100 and len(schemas) == 405 + 100
+    assert MIGRATION_HEAD == "0034_survey_control_policy"

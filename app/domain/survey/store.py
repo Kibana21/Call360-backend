@@ -1353,19 +1353,29 @@ def rebuild_usage(db: Session, subject_type: str, subject_id: uuid.UUID, manifes
         )
 
 
-def library(db: Session, kind: str) -> list[dict[str, Any]]:
-    """Frozen asset versions of one kind, with how many candidates and versions pin each."""
+def library(db: Session, kind: str, markets: Sequence[str]) -> list[dict[str, Any]]:
+    """The legacy list of the survey library (SS-03A): asset versions of one kind with their fingerprint and how widely
+    they are pinned. Since the LIB-1 security correction it lists ONLY what is reusable — versions pinned by a published
+    survey version in the reader's markets (the rule of ``published_index``, owner decision LIB-D-1) — whether or not
+    the library setting is on. A draft, a version frozen only in an unpublished, rejected or withdrawn candidate, and
+    anything of another market are not listed and not counted. ``candidates`` counts the published candidates only."""
     if kind not in ASSET_KINDS:
         raise SurveyError(404, "NOT_FOUND", "Unknown kind of asset")
-    return _all(
-        db,
-        "SELECT a.kind, a.code, a.version, a.sha256, a.frozen_at, "
-        "(SELECT count(*) FROM survey_asset_usage u WHERE u.kind = a.kind "
-        "AND u.code = a.code AND u.version = a.version "
-        " AND u.subject_type = 'CANDIDATE') AS candidates, "
-        "(SELECT count(*) FROM survey_asset_usage u WHERE u.kind = a.kind "
-        "AND u.code = a.code AND u.version = a.version "
-        " AND u.subject_type = 'VERSION') AS versions "
-        "FROM survey_asset_version a WHERE a.kind = :k AND a.state = 'FROZEN' ORDER BY a.code, a.version",
-        k=kind,
-    )
+    out = []
+    for (k, code, version), pins in sorted(published_index(db, markets).items()):
+        if k != kind:
+            continue
+        row = _one(
+            db,
+            "SELECT sha256, frozen_at FROM survey_asset_version WHERE kind = :k AND code = :c AND version = :v "
+            "AND state = 'FROZEN'",
+            k=kind, c=code, v=version,
+        )  # fmt: skip
+        if row:
+            out.append(
+                {
+                    "kind": kind, "code": code, "version": version, "sha256": row["sha256"],
+                    "frozen_at": row["frozen_at"], "candidates": len(pins), "versions": len(pins),
+                }
+            )  # fmt: skip
+    return out
