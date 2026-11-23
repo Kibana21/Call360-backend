@@ -656,7 +656,7 @@ def test_zz_migration_0036_keeps_every_fingerprint_and_refuses_to_lose_a_standal
                 return str(c.execute(text("SELECT version_num FROM call360_test.alembic_version")).scalar_one())
 
         before = governed()
-        assert head() == MIGRATION_HEAD == "0036_survey_module_authoring"
+        assert head() == MIGRATION_HEAD
         migrate(settings, "0035_survey_execution_assurance", down=True)
         assert head() == "0035_survey_execution_assurance" and governed() == before
         # on the earlier schema every definition reads as a survey, and the survey API works as before
@@ -674,6 +674,9 @@ def test_zz_migration_0036_keeps_every_fingerprint_and_refuses_to_lose_a_standal
         kept = governed()
         with pytest.raises(RuntimeError, match="standalone modules exist"):
             migrate(settings, "0035_survey_execution_assurance", down=True)
+        # 0037 (SHARED-1, no survey-only rule here) rolled back first; 0036 then refused and kept the module
+        assert head() == "0036_survey_module_authoring" and governed() == kept
+        migrate(settings, "head")
         assert head() == MIGRATION_HEAD and governed() == kept
     finally:
         for c in clients:

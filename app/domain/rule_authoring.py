@@ -155,10 +155,10 @@ def _next_version(db: Session, rule_code: str) -> int:
 def _version_row(db: Session, rule_version_id: uuid.UUID, markets: Sequence[str]) -> dict[str, Any]:
     r = _one(
         db,
-        "SELECT r.*, f.market_code, p.name, p.description, p.is_fallback FROM script_assignment_rule_version r "
-        "JOIN script_version v ON v.id = r.target_script_version_id JOIN script_family f "
-        "ON f.id = v.script_family_id LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id "
-        "WHERE r.id = :r AND f.market_code = ANY(:m)",
+        # SHARED-1: the rule's OWN market and kind; a rule that names no script is found like any other
+        f"SELECT r.*, {ri.RULE_MARKET_SQL} AS market_code, {ri.RULE_KIND_SQL} AS target_kind, p.name, p.description, "
+        f"p.is_fallback {ri.RULE_FROM_SQL}LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id "
+        f"WHERE r.id = :r AND {ri.RULE_MARKET_SQL} = ANY(:m)",
         r=rule_version_id,
         m=list(markets),
     )
@@ -173,13 +173,17 @@ def _conditions_json(conds: Sequence[re_.Condition]) -> list[dict[str, Any]]:
 
 def _insert_draft(db: Session, actor_ref: str, actor_name: str, **v: Any) -> uuid.UUID:
     did = uuid.uuid4()
+    survey_only = (v.get("target_kind") or ri.SCRIPT_KIND) == ri.SURVEY_KIND
+    # SHARED-1: a rule that names no script is stored with its kind and never with a script target (migration 0037).
+    # A script-backed rule is stored by exactly the statement it always was.
+    column, value = ("target_kind", "'SURVEY_BINDING'") if survey_only else ("target_script_version_id", ":target")
     db.execute(
         text(
             "INSERT INTO assignment_rule_draft (id, rule_code, name, description, market_code, planned_version, "
             "base_rule_version_id, copied_from_rule_version_id, status, conditions, priority, is_fallback, "
-            "target_script_version_id, effective_from, effective_to, author_ref, created_by, source_type, "
+            f"{column}, effective_from, effective_to, author_ref, created_by, source_type, "
             "source_system, source_reference, source_observed_at, recorded_at, is_synthetic) VALUES (:id, :code, "
-            ":name, :descr, :market, :ver, :base, :copied, 'DRAFT', CAST(:conds AS jsonb), :prio, :fb, :target, :ef, "
+            f":name, :descr, :market, :ver, :base, :copied, 'DRAFT', CAST(:conds AS jsonb), :prio, :fb, {value}, :ef, "
             ":et, :author, :created_by, :source_type, :source_system, :source_reference, :source_observed_at, "
             ":recorded_at, :is_synthetic)"
         ),
@@ -195,7 +199,7 @@ def _insert_draft(db: Session, actor_ref: str, actor_name: str, **v: Any) -> uui
             "conds": json.dumps(v["conditions"]),
             "prio": v["priority"],
             "fb": v["is_fallback"],
-            "target": v.get("target"),
+            **({} if survey_only else {"target": v.get("target")}),
             "ef": v.get("effective_from"),
             "et": v.get("effective_to"),
             "author": actor_ref,
@@ -214,6 +218,7 @@ def _insert_draft(db: Session, actor_ref: str, actor_name: str, **v: Any) -> uui
             "planned_version": v["version"],
             "based_on": v.get("base_ref"),
             "copied_from": v.get("copied_ref"),
+            **({"target_kind": ri.SURVEY_KIND} if survey_only else {}),
         },
     )
     return did
@@ -249,10 +254,21 @@ def create_rule(
     description: str,
     market: str,
     copy_from_rule_version_id: uuid.UUID | None,
+    target_kind: str = ri.SCRIPT_KIND,
 ) -> uuid.UUID:
-    """A new rule (version 1) — empty apart from its market, or a copy of an existing rule version's settings."""
+    """A new rule (version 1) — empty apart from its market, or a copy of an existing rule version's settings.
+
+    ``target_kind`` (SHARED-1) says what the rule selects and is fixed here for the life of the rule: a script
+    version for cases (the default, as always), or a survey through a governed binding and nothing else. The market is
+    one the author is authorised for; it is never taken from a script, a survey or a free field."""
     if market not in markets:
         raise RuleAuthoringError(403, "MARKET_NOT_IN_SCOPE", "You can only create rules in your markets")
+    if target_kind not in ri.ALL_KINDS:
+        raise RuleAuthoringError(422, "INVALID_TARGET_KIND", "A rule selects a script version or a survey binding")
+    if target_kind == ri.SURVEY_KIND and not ri.shared_schema(db):
+        raise RuleAuthoringError(
+            409, "SURVEY_ONLY_RULES_UNAVAILABLE", "Rules that select a survey only are not available on this server"
+        )
     code = _free_code(db, code)
     values: dict[str, Any] = {
         "rule_code": code,
@@ -263,9 +279,15 @@ def create_rule(
         "conditions": [{"field": "market", "values": [market]}],
         "priority": DEFAULT_PRIORITY,
         "is_fallback": False,
+        "target_kind": target_kind,
     }
     if copy_from_rule_version_id is not None:
         src = _version_row(db, copy_from_rule_version_id, markets)
+        if src["target_kind"] != target_kind:
+            # the kind is never changed by a copy: a survey-only copy of a script rule would silently drop its script
+            raise RuleAuthoringError(
+                422, "COPY_KIND_MISMATCH", "A copy selects the same kind of thing as the rule it is copied from"
+            )
         values.update(
             conditions=_conditions_json(re_.parse_predicate(src["predicate"])),
             priority=src["priority"],
@@ -327,6 +349,7 @@ def create_version(
         priority=base["priority"],
         is_fallback=bool(base["is_fallback"]),
         target=base["target_script_version_id"],
+        target_kind=base["target_kind"],  # a new version selects the same kind of thing as the rule always did
         base=base["id"],
         base_ref=f"{rule_code} v{base['version']}",
     )
@@ -366,6 +389,10 @@ def update_draft(
         "effective_from": ef,
         "effective_to": et,
     }
+    if ri.kind_of(d) == ri.SURVEY_KIND and new["target_script_version_id"] is not None:
+        raise RuleAuthoringError(
+            422, "TARGET_NOT_ALLOWED", "This rule selects a survey through a binding; it cannot name a script"
+        )
     before = {k: d[k] for k in new}
     changed = [k for k in new if _norm(before[k]) != _norm(new[k])]
     if not changed:
@@ -433,7 +460,23 @@ def analyse(
         issues.append(_issue("ERROR", "MARKET_REQUIRED", "Every rule must name its market"))
     elif list(fields["market"].values) != [market]:
         issues.append(_issue("ERROR", "MARKET_MISMATCH", f"This rule belongs to market {market}"))
-    if not tid:
+    survey_only = ri.kind_of(draft) == ri.SURVEY_KIND
+    if survey_only:
+        # SHARED-1: this rule names no script. It is never a candidate for assigning a script to a case; it selects a
+        # survey only where a published survey binding says so.
+        if tid:
+            issues.append(
+                _issue("ERROR", "TARGET_NOT_ALLOWED", "This rule selects a survey through a binding; remove the script")
+            )
+        issues.append(
+            _issue(
+                "WARNING",
+                "SURVEY_ONLY",
+                "This rule assigns no script and can never assign one to a case. It selects a survey only once a "
+                "survey binding to this exact rule version is published",
+            )
+        )
+    elif not tid:
         issues.append(_issue("ERROR", "NO_TARGET", "Choose the published script version this rule assigns"))
     elif target_row is None:
         issues.append(_issue("ERROR", "TARGET_NOT_FOUND", "The target script version is not available to you"))
@@ -506,9 +549,11 @@ def analyse(
         cand = ri.draft_candidate(db, {**draft, "conditions": _conditions_json(conds)}, now)
         if draft.get("effective_from") is None:
             cand = replace(cand, effective_from=now)
+        # A script-backed draft is checked against the script-backed rules, exactly as before. A survey-only draft is
+        # checked against EVERY live rule of its market: that is the set survey selection evaluates it in.
         live = [
             r
-            for r in ri.published_candidates(db, markets, now)
+            for r in ri.published_candidates(db, markets, now, ri.ALL_KINDS if survey_only else (ri.SCRIPT_KIND,))
             if r.status == "PUBLISHED" and (r.effective_to is None or r.effective_to > now)
         ]
         ruleset = ri.proposed_ruleset(live, [cand])
@@ -525,6 +570,8 @@ def analyse(
             m=list(markets),
             c=draft.get("rule_code") or "",
         )
+        if not survey_only:
+            others = [o for o in others if ri.kind_of(o) == ri.SCRIPT_KIND]  # as before: script-backed drafts only
         other_cands = []
         for o in others:
             oc = ri.draft_candidate(db, o, now)
@@ -541,7 +588,11 @@ def analyse(
                 )
     explanation = re_.explain(
         conds,
-        ri.target_label(target_row) if target_row else "the chosen script version",
+        ri.SURVEY_TARGET_LABEL
+        if survey_only
+        else ri.target_label(target_row)
+        if target_row
+        else "the chosen script version",
         int(draft.get("priority") or DEFAULT_PRIORITY),
         is_fallback=bool(draft.get("is_fallback")),
         labels=lab,
@@ -580,6 +631,29 @@ def record_validation(
 
 # ---- lifecycle --------------------------------------------------------------------------------------------------
 def manifest(db: Session, d: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, Any]:
+    if ri.kind_of(d) == ri.SURVEY_KIND:
+        # the manifest of a rule that names no script says so; a script-backed rule's manifest is what it always was
+        return {
+            "schema": MANIFEST_SCHEMA,
+            "rule_code": d["rule_code"],
+            "planned_version": d["planned_version"],
+            "name": d["name"],
+            "description": d["description"],
+            "market": d["market_code"],
+            "conditions": d["conditions"],
+            "predicate": result["predicate"],
+            "priority": d["priority"],
+            "specificity": result["specificity"],
+            "is_fallback": d["is_fallback"],
+            "target_kind": ri.SURVEY_KIND,
+            "target_script_version_id": None,
+            "target_label": ri.SURVEY_TARGET_LABEL,
+            "effective_from": _norm(d["effective_from"]),
+            "effective_to": _norm(d["effective_to"]),
+            "base_rule_version_id": str(d["base_rule_version_id"]) if d["base_rule_version_id"] else None,
+            "explanation": result["explanation"],
+            "content_approval_status": "SYNTHETIC_UNAPPROVED",
+        }
     t = ri._target_labels(db, [d["target_script_version_id"]]).get(str(d["target_script_version_id"]))
     return {
         "schema": MANIFEST_SCHEMA,
@@ -722,7 +796,8 @@ def publish(
         sha256_of(frozen) != d["manifest_sha256"]
         or frozen.get("conditions") != d["conditions"]
         or frozen.get("priority") != d["priority"]
-        or frozen.get("target_script_version_id") != str(d["target_script_version_id"])
+        or frozen.get("target_script_version_id")
+        != (str(d["target_script_version_id"]) if d["target_script_version_id"] else None)
         or frozen.get("predicate") != result["predicate"]
     ):
         raise RuleAuthoringError(409, "MANIFEST_MISMATCH", "The approved content no longer matches its manifest")
@@ -752,11 +827,15 @@ def publish(
         v=version,
     ):
         version = _next_version(db, d["rule_code"])
+    survey_only = ri.kind_of(d) == ri.SURVEY_KIND
+    shared = ri.shared_schema(db)
     body = {
         "rule_code": d["rule_code"],
         "version": version,
         "predicate": result["predicate"],
-        "target": str(d["target_script_version_id"]),
+        # the checksum of a script-backed rule covers exactly what it always did
+        **({"target_kind": ri.SURVEY_KIND, "market": d["market_code"], "target": None} if survey_only else {}),
+        **({} if survey_only else {"target": str(d["target_script_version_id"])}),
         "priority": d["priority"],
         "specificity": result["specificity"],
         "is_fallback": d["is_fallback"],
@@ -770,12 +849,15 @@ def publish(
         text(
             "INSERT INTO script_assignment_rule_version (id, rule_code, version, predicate, priority, specificity, "
             "target_script_version_id, effective_from, effective_to, status, checksum, author_ref, checker_ref, "
-            "created_by, source_type, source_system, source_reference, source_observed_at, recorded_at, is_synthetic) "
-            "VALUES (:id, :code, :ver, CAST(:pred AS jsonb), :prio, :spec, :target, :ef, :et, 'PUBLISHED', :sum, "
+            "created_by, source_type, source_system, source_reference, source_observed_at, recorded_at, is_synthetic"
+            # SHARED-1: the rule's OWN market — the draft's, which was the author's authorised market — and its kind
+            + (", market_code, target_kind) " if shared else ") ")
+            + "VALUES (:id, :code, :ver, CAST(:pred AS jsonb), :prio, :spec, :target, :ef, :et, 'PUBLISHED', :sum, "
             ":author, :checker, :created_by, :source_type, :source_system, :source_reference, :source_observed_at, "
-            ":recorded_at, :is_synthetic)"
+            ":recorded_at, :is_synthetic" + (", :market, :kind)" if shared else ")")
         ),
         {
+            **({"market": d["market_code"], "kind": ri.kind_of(d)} if shared else {}),
             "id": rid,
             "code": d["rule_code"],
             "ver": version,
@@ -881,7 +963,7 @@ def snapshot_of_version(r: Mapping[str, Any]) -> dict[str, Any]:
         "priority": r["priority"],
         "specificity": r["specificity"],
         "is_fallback": bool(r.get("is_fallback")),
-        "target_script_version_id": str(r["target_script_version_id"]),
+        "target_script_version_id": str(r["target_script_version_id"]) if r["target_script_version_id"] else None,
         "effective_from": _norm(r["effective_from"]),
         "effective_to": _norm(r["effective_to"]),
     }
@@ -996,6 +1078,14 @@ def simulate(
             )
     opts = ri.options(db, markets)
     for d in drafts:
+        if ri.kind_of(d) == ri.SURVEY_KIND:
+            # this simulation assigns SCRIPTS to synthetic CASES; a rule that names no script has nothing to do in it
+            raise RuleAuthoringError(
+                422,
+                "SURVEY_ONLY_NOT_SIMULATED_ON_CASES",
+                f"{d['rule_code']} selects a survey through a binding and can never assign a script to a case. "
+                "Try it in Survey assignment, against a synthetic application",
+            )
         _, problems = ri.validate_conditions(d["conditions"], opts)
         if problems or not d["target_script_version_id"]:
             raise RuleAuthoringError(

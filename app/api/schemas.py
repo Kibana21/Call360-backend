@@ -2484,6 +2484,11 @@ class RuleOptions(BaseModel):
     targets: list[RuleTargetOption]
     precedence: list[str]
     priority_range: list[int]
+    survey_only_rules: bool = Field(
+        default=False,
+        description="SHARED-1: whether this server can create a rule that names no script and selects a survey only "
+        "through a governed survey binding.",
+    )
 
 
 class RuleIssue(BaseModel):
@@ -2523,6 +2528,9 @@ class RuleContent(BaseModel):
 class RuleExplainIn(RuleContent):
     rule_code: str | None = Field(default=None, max_length=40)
     market: str = Field(default="SG", max_length=40)
+    target_kind: Literal["SCRIPT_VERSION", "SURVEY_BINDING"] = Field(
+        default="SCRIPT_VERSION", description="SHARED-1: what the rule being edited selects."
+    )
 
 
 class RuleCreate(BaseModel):
@@ -2531,6 +2539,11 @@ class RuleCreate(BaseModel):
     description: str = Field(default="", max_length=1000)
     market: str = Field(default="SG", max_length=40)
     copy_from_rule_version_id: uuid.UUID | None = None
+    target_kind: Literal["SCRIPT_VERSION", "SURVEY_BINDING"] = Field(
+        default="SCRIPT_VERSION",
+        description="SHARED-1: what the rule selects, fixed for its life. SURVEY_BINDING needs "
+        "`shared_rule_services_enabled`.",
+    )
 
 
 class RuleVersionCreate(BaseModel):
@@ -2596,6 +2609,12 @@ class RuleVersionOut(BaseModel):
     version: int
     name: str
     status: str
+    market: str | None = Field(default=None, description="SHARED-1: the rule's own governed market.")
+    target_kind: Literal["SCRIPT_VERSION", "SURVEY_BINDING"] = Field(
+        default="SCRIPT_VERSION",
+        description="SCRIPT_VERSION: assigns a published script version to a case. SURVEY_BINDING: names no script; "
+        "it selects a survey only through a governed survey binding and can never assign a script to a case.",
+    )
     priority: int
     specificity: int
     is_fallback: bool
@@ -2628,6 +2647,9 @@ class RuleSummary(BaseModel):
     rule_code: str
     name: str
     market: str
+    target_kind: Literal["SCRIPT_VERSION", "SURVEY_BINDING"] = Field(
+        default="SCRIPT_VERSION", description="SHARED-1: what every version of this rule selects."
+    )
     live: RuleVersionOut | None
     versions: list[RuleVersionOut]
     open_draft: RuleDraftSummary | None
@@ -2646,6 +2668,7 @@ class RuleDraftOut(BaseModel):
     name: str
     description: str
     market: str
+    target_kind: Literal["SCRIPT_VERSION", "SURVEY_BINDING"] = "SCRIPT_VERSION"
     planned_version: int
     status: str
     conditions: list[RuleCondition]

@@ -50,6 +50,8 @@ from app.security.models import (
 MARKET = "SG"
 BY = "SYSTEM:dev-survey-identities"
 ACCOUNTS_FILE = Path(".secrets") / "dev_survey_accounts.json"
+REASON = "Development-only survey identity (SS-03A enablement)"
+ROLE_REASON = "Development-only survey role (SS-03A enablement)"
 
 #: role code, role name, group code, username, display name, permissions
 PEOPLE = (
@@ -63,7 +65,7 @@ PEOPLE = (
 )  # fmt: skip
 
 
-def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> list[str]:  # type: ignore[no-untyped-def]
+def _create(db, accounts: dict[str, str], people=None, market: str = MARKET, reason: str = REASON) -> list[str]:  # type: ignore[no-untyped-def]  # noqa: E501
     """``people`` and ``market`` default to the three development identities in SG; the browser end-to-end setup
     (scripts/e2e_survey_setup.py) passes its own, for the isolated TEST schema only."""
     done: list[str] = []
@@ -109,7 +111,7 @@ def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> 
             db.add(
                 GroupScopeMapping(
                     id=uuid.uuid4(), group_id=group.id, market_code=market, effective_from=now, created_by=BY,
-                    change_reason="Development-only survey identity (SS-03A enablement)",
+                    change_reason=reason,
                 )
             )  # fmt: skip
         group.status = "ACTIVE"
@@ -120,7 +122,7 @@ def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> 
             create_local_account(
                 db, username=username, display_name=display, password=password, group_code=group_code, created_by=BY,
                 actor=Actor(service="dev-survey-identities"), meta=RequestMeta(),
-                audit_reason="Development-only survey identity (SS-03A enablement)",
+                audit_reason=reason,
             )  # fmt: skip
             accounts[username] = password
             done.append(f"created {username} in {group_code} ({role_code}: {', '.join(wanted)})")
@@ -132,7 +134,8 @@ def _create(db, accounts: dict[str, str], people=None, market: str = MARKET) -> 
             done.append(f"exists  {username} in {group_code} ({role_code}: {', '.join(wanted)})")
         write_audit(
             db, action="ADMIN.ROLE_PERMISSIONS_SET", outcome="SUCCEEDED", actor=Actor(service="dev-survey-identities"),
-            entity_type="role", entity_id=role_code, reason="Development-only survey role (SS-03A enablement)",
+            entity_type="role", entity_id=role_code,
+            reason=ROLE_REASON if reason == REASON else reason,
             after={"role": role_code, "permissions": list(wanted), "group": group_code, "market": market},
         )  # fmt: skip
     return done

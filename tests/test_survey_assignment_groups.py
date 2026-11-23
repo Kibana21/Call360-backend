@@ -449,8 +449,8 @@ def test_one_application_selects_a_primary_additional_and_alternative_surveys(
 
     real = ri.published_candidates
 
-    def tied(db_: Any, markets_: Any, at_: Any) -> Any:
-        out = real(db_, markets_, at_)
+    def tied(db_: Any, markets_: Any, at_: Any, *kinds: Any) -> Any:
+        out = real(db_, markets_, at_, *kinds)
         twin = next(c for c in out if c.rule_code == "C-AGENCY")
         return [
             dataclasses.replace(c, conditions=twin.conditions, priority=twin.priority) if c.rule_code == "C-STD" else c

@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     # needs `survey_library_enabled` and migration 0036. Authoring and testing only: a standalone module is never a
     # survey and cannot be simulated, planned or assigned as one.
     survey_module_authoring_enabled: bool = False
+    # SHARED-1: Assignment Rules and Finding Rules as shared services on their own — a rule with a market of its own
+    # and, for survey selection only, no script target. OFF by default; needs migration 0037. With it off no
+    # survey-only rule can be created and every existing rule behaves exactly as before.
+    shared_rule_services_enabled: bool = False
+    # APPL-X1: the Survey Applicability PROTOTYPE — four stateless operations that run the pure applicability
+    # evaluator on documents sent in the request. OFF by default; needs no migration and no table; reads and writes
+    # nothing. With it off the routes do not exist.
+    survey_applicability_prototype_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

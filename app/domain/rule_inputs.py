@@ -259,6 +259,39 @@ def case_inputs(db: Session, markets: Sequence[str], case_ids: Sequence[uuid.UUI
 
 
 # ---- rule candidates --------------------------------------------------------------------------------------------
+#: SHARED-1 — what a rule selects. SCRIPT_VERSION: a published script version, for a case (every rule before
+#: SHARED-1). SURVEY_BINDING: nothing by itself — a survey, only through a governed survey binding; it names no script
+#: and is NEVER a candidate for operational script assignment.
+SCRIPT_KIND, SURVEY_KIND = "SCRIPT_VERSION", "SURVEY_BINDING"
+ALL_KINDS = (SCRIPT_KIND, SURVEY_KIND)
+#: The rule's own market and kind (migration 0037). Read through ``to_jsonb`` so the same statement also runs on a
+#: schema that predates it, where every rule is script-backed and its market is its script family's (alias ``f``).
+RULE_MARKET_SQL = "coalesce(to_jsonb(r.*)->>'market_code', f.market_code)"
+RULE_KIND_SQL = "coalesce(to_jsonb(r.*)->>'target_kind', 'SCRIPT_VERSION')"
+#: every rule version with the script it targets, if it targets one
+RULE_FROM_SQL = (
+    "FROM script_assignment_rule_version r LEFT JOIN script_version v ON v.id = r.target_script_version_id "
+    "LEFT JOIN script_family f ON f.id = v.script_family_id "
+)
+SURVEY_TARGET = "survey-binding:"  # the target of a survey-only rule: its own binding, never a script
+
+
+def shared_schema(db: Session) -> bool:
+    """Whether this schema holds the columns of migration 0037 (a rule's own market and kind)."""
+    return bool(
+        db.execute(
+            text(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() "
+                "AND table_name = 'script_assignment_rule_version' AND column_name = 'target_kind'"
+            )
+        ).scalar()
+    )
+
+
+def kind_of(row: Mapping[str, Any]) -> str:
+    return str(row.get("target_kind") or SCRIPT_KIND)
+
+
 def _target_labels(db: Session, ids: Sequence[uuid.UUID]) -> dict[str, dict[str, Any]]:
     if not ids:
         return {}
@@ -285,19 +318,48 @@ def target_label(t: Mapping[str, Any] | None) -> str:
     return f"{t['family']} v{t['version_label']}" if t else "no target script"
 
 
-def published_candidates(db: Session, markets: Sequence[str], at: datetime) -> list[re_.RuleCandidate]:
-    """Every rule version in scope (any status: the engine excludes non-published ones with a reason)."""
+SURVEY_TARGET_LABEL = "no script — a survey, through a survey binding"
+
+
+def published_candidates(
+    db: Session, markets: Sequence[str], at: datetime, kinds: Sequence[str] = (SCRIPT_KIND,)
+) -> list[re_.RuleCandidate]:
+    """Every rule version in scope (any status: the engine excludes non-published ones with a reason).
+
+    ``kinds`` is the explicit scope (SHARED-1). The DEFAULT is script-backed rules only: operational script assignment,
+    its simulation over cases and the script-side lists therefore see exactly the rules they always saw, and can never
+    be handed a rule that names no script. Only survey selection asks for both kinds."""
     rows = _all(
         db,
-        "SELECT r.*, p.is_fallback, p.name FROM script_assignment_rule_version r JOIN script_version v "
-        "ON v.id = r.target_script_version_id JOIN script_family f ON f.id = v.script_family_id "
-        "LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id WHERE f.market_code = ANY(:m) "
-        "ORDER BY r.rule_code, r.version",
+        f"SELECT r.*, {RULE_KIND_SQL} AS rule_kind, p.is_fallback, p.name {RULE_FROM_SQL}"
+        f"LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id WHERE {RULE_MARKET_SQL} = ANY(:m) "
+        f"AND {RULE_KIND_SQL} = ANY(:k) ORDER BY r.rule_code, r.version",
         m=list(markets),
+        k=list(kinds),
     )
-    targets = _target_labels(db, [r["target_script_version_id"] for r in rows])
+    targets = _target_labels(db, [r["target_script_version_id"] for r in rows if r["target_script_version_id"]])
     out = []
     for r in rows:
+        if r["rule_kind"] == SURVEY_KIND:
+            out.append(
+                re_.RuleCandidate(
+                    ref=f"{r['rule_code']} v{r['version']}",
+                    rule_code=r["rule_code"],
+                    version=r["version"],
+                    origin="PUBLISHED",
+                    status=r["status"],
+                    conditions=tuple(re_.parse_predicate(r["predicate"])),
+                    priority=r["priority"],
+                    is_fallback=bool(r["is_fallback"]),
+                    # never a script: its only target is the survey a governed binding gives it
+                    target_id=SURVEY_TARGET + r["rule_code"],
+                    target_label=SURVEY_TARGET_LABEL,
+                    effective_from=r["effective_from"],
+                    effective_to=r["effective_to"],
+                    target_effective=False,
+                )
+            )
+            continue
         t = targets.get(str(r["target_script_version_id"]))
         out.append(
             re_.RuleCandidate(
@@ -324,6 +386,23 @@ def draft_candidate(db: Session, draft: Mapping[str, Any], at: datetime) -> re_.
     conds = [re_.Condition(c["field"], tuple(c["values"])) for c in draft["conditions"]]
     tid = draft["target_script_version_id"]
     t = _target_labels(db, [tid]).get(str(tid)) if tid else None
+    if kind_of(draft) == SURVEY_KIND:
+        return re_.RuleCandidate(
+            ref=f"{draft['rule_code']} v{draft['planned_version']} (proposed)",
+            rule_code=draft["rule_code"],
+            version=draft["planned_version"],
+            origin="PROPOSED",
+            status=draft["status"],
+            conditions=tuple(sorted(conds, key=lambda c: re_.ORDER[c.field])),
+            priority=draft["priority"],
+            is_fallback=bool(draft["is_fallback"]),
+            target_id=SURVEY_TARGET + draft["rule_code"],
+            target_label=SURVEY_TARGET_LABEL,
+            effective_from=draft["effective_from"],
+            effective_to=draft["effective_to"],
+            target_effective=False,
+            draft_id=str(draft["id"]),
+        )
     return re_.RuleCandidate(
         ref=f"{draft['rule_code']} v{draft['planned_version']} (proposed)",
         rule_code=draft["rule_code"],

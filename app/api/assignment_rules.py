@@ -56,7 +56,7 @@ from app.core.errors import AppError
 from app.domain import rule_authoring as ra
 from app.domain import rule_engine as re_
 from app.domain import rule_inputs as ri
-from app.security.authz import AuthContext, get_db, request_meta, require
+from app.security.authz import AuthContext, get_db, request_meta, require, require_any
 
 router = APIRouter(prefix="/api/v1", tags=["assignment-rules"])
 _ERR: dict[int | str, dict[str, Any]] = {code: {"model": ErrorResponse} for code in (401, 403, 404, 409, 422, 429)}
@@ -160,10 +160,11 @@ def _version_outs(db: Session, markets: list[str], rule_code: str | None = None)
     rows = (
         db.execute(
             text(
-                "SELECT r.*, p.name, p.is_fallback, p.published_by FROM script_assignment_rule_version r "
-                "JOIN script_version v ON v.id = r.target_script_version_id JOIN script_family f "
-                "ON f.id = v.script_family_id LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id "
-                "WHERE f.market_code = ANY(:m) AND (CAST(:c AS text) IS NULL OR r.rule_code = :c) "
+                # SHARED-1: every rule of the caller's markets by the rule's OWN market, script-backed or not
+                f"SELECT r.*, {ri.RULE_MARKET_SQL} AS rule_market, {ri.RULE_KIND_SQL} AS rule_kind, p.name, "
+                f"p.is_fallback, p.published_by {ri.RULE_FROM_SQL}"
+                "LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id "
+                f"WHERE {ri.RULE_MARKET_SQL} = ANY(:m) AND (CAST(:c AS text) IS NULL OR r.rule_code = :c) "
                 "ORDER BY r.rule_code, r.version"
             ),
             {"m": markets, "c": rule_code},
@@ -171,7 +172,7 @@ def _version_outs(db: Session, markets: list[str], rule_code: str | None = None)
         .mappings()
         .all()
     )
-    targets = _targets(db, [r["target_script_version_id"] for r in rows])
+    targets = _targets(db, [r["target_script_version_id"] for r in rows if r["target_script_version_id"]])
     counts = {
         r.rid: r.n
         for r in db.execute(
@@ -189,6 +190,7 @@ def _version_outs(db: Session, markets: list[str], rule_code: str | None = None)
     for r in rows:
         conds = re_.parse_predicate(r["predicate"])
         t = targets.get(str(r["target_script_version_id"]))
+        survey_only = r["rule_kind"] == ri.SURVEY_KIND
         out.append(
             RuleVersionOut(
                 id=r["id"],
@@ -196,14 +198,22 @@ def _version_outs(db: Session, markets: list[str], rule_code: str | None = None)
                 version=r["version"],
                 name=r["name"] or r["rule_code"],
                 status=r["status"],
+                market=r["rule_market"],
+                target_kind=r["rule_kind"],
                 priority=r["priority"],
                 specificity=r["specificity"],
                 is_fallback=bool(r["is_fallback"]),
                 conditions=[RuleCondition(field=c.field, values=list(c.values)) for c in conds],
                 explanation=re_.explain(
-                    conds, ri.target_label(t), r["priority"], is_fallback=bool(r["is_fallback"]), labels=lab
+                    conds,
+                    ri.SURVEY_TARGET_LABEL if survey_only else ri.target_label(t),
+                    r["priority"],
+                    is_fallback=bool(r["is_fallback"]),
+                    labels=lab,
                 ),
-                target=_target_ref(t, r["target_script_version_id"]) or RuleTargetRef(id=None, label="—"),
+                target=RuleTargetRef(id=None, label=ri.SURVEY_TARGET_LABEL)
+                if survey_only
+                else _target_ref(t, r["target_script_version_id"]) or RuleTargetRef(id=None, label="—"),
                 effective_from=r["effective_from"],
                 effective_to=r["effective_to"],
                 checksum=r["checksum"],
@@ -231,7 +241,11 @@ def _draft_summary(d: dict[str, Any]) -> RuleDraftSummary:
 
 
 @router.get("/assignment-rules/options", response_model=RuleOptions, operation_id="rule_options", responses=_ERR)
-def rule_options(auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)) -> RuleOptions:
+def rule_options(
+    request: Request,
+    auth: AuthContext = Depends(require_any("script.read", "assignment_rule.read")),
+    db: Session = Depends(get_db),
+) -> RuleOptions:
     """Approved condition fields and governed values, unsupported fields with reasons, target script versions and the
     precedence semantics (D-58…D-61)."""
     markets = _markets(auth)
@@ -269,11 +283,14 @@ def rule_options(auth: AuthContext = Depends(require("script.read")), db: Sessio
         ],
         precedence=PRECEDENCE,
         priority_range=[1, 999],
+        survey_only_rules=bool(request.app.state.settings.shared_rule_services_enabled) and ri.shared_schema(db),
     )
 
 
 @router.get("/assignment-rules", response_model=RuleRegistry, operation_id="rule_registry", responses=_ERR)
-def rule_registry(auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)) -> RuleRegistry:
+def rule_registry(
+    auth: AuthContext = Depends(require_any("script.read", "assignment_rule.read")), db: Session = Depends(get_db)
+) -> RuleRegistry:
     """Every rule in scope: its live version, version history, drafts, and conflicts among live rules."""
     markets = _markets(auth)
     versions = _version_outs(db, markets)
@@ -292,12 +309,14 @@ def rule_registry(auth: AuthContext = Depends(require("script.read")), db: Sessi
         live = next((v for v in reversed(vs) if v.status == "PUBLISHED"), None)
         open_d = next((d for d in ds if d["status"] in ra.OPEN), None)
         name = (live.name if live else None) or (open_d["name"] if open_d else None) or (vs[-1].name if vs else code)
-        market = ds[0]["market_code"] if ds else "SG"
+        # SHARED-1: the rule's own market — from its published version, else from its draft
+        market = (vs[-1].market if vs else None) or (ds[0]["market_code"] if ds else "SG")
         items.append(
             RuleSummary(
                 rule_code=code,
                 name=name,
                 market=market,
+                target_kind=vs[-1].target_kind if vs else ri.kind_of(ds[0]) if ds else ri.SCRIPT_KIND,
                 live=live,
                 versions=vs,
                 open_draft=_draft_summary(open_d) if open_d else None,
@@ -330,6 +349,7 @@ def _draft_out(db: Session, d: dict[str, Any], markets: list[str]) -> RuleDraftO
         name=d["name"],
         description=d["description"],
         market=d["market_code"],
+        target_kind=ri.kind_of(d),
         planned_version=d["planned_version"],
         status=d["status"],
         conditions=[RuleCondition(**c) for c in d["conditions"]],
@@ -362,7 +382,9 @@ def _draft_out(db: Session, d: dict[str, Any], markets: list[str]) -> RuleDraftO
     "/assignment-rule-drafts/{draft_id}", response_model=RuleDraftOut, operation_id="rule_draft", responses=_ERR
 )
 def rule_draft(
-    draft_id: uuid.UUID, auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)
+    draft_id: uuid.UUID,
+    auth: AuthContext = Depends(require_any("script.read", "assignment_rule.read")),
+    db: Session = Depends(get_db),
 ) -> RuleDraftOut:
     try:
         d = ra.draft_row(db, draft_id, _markets(auth))
@@ -375,7 +397,9 @@ def rule_draft(
     "/assignment-rules/{rule_code}/history", response_model=RuleHistory, operation_id="rule_history", responses=_ERR
 )
 def rule_history(
-    rule_code: str, auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)
+    rule_code: str,
+    auth: AuthContext = Depends(require_any("script.read", "assignment_rule.read")),
+    db: Session = Depends(get_db),
 ) -> RuleHistory:
     markets = _markets(auth)
     versions = _version_outs(db, markets, rule_code)
@@ -415,7 +439,7 @@ def rule_diff(
     rule_code: str,
     target: str = Query(max_length=80, description="'version:<id>' or 'draft:<id>'"),
     base: str | None = Query(default=None, max_length=80, description="'version:<id>' or 'draft:<id>'"),
-    auth: AuthContext = Depends(require("script.read")),
+    auth: AuthContext = Depends(require_any("script.read", "assignment_rule.read")),
     db: Session = Depends(get_db),
 ) -> RuleDiff:
     """Compare two versions or drafts of one rule: condition changes (more or less permissive) and settings."""
@@ -450,7 +474,7 @@ def rule_diff(
 def rule_explain(
     body: RuleExplainIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.read")),
+    auth: AuthContext = Depends(require_any("script.read", "assignment_rule.read")),
     db: Session = Depends(get_db),
 ) -> RuleAnalysis:
     """Immediate feedback for unsaved editor content: validation issues, conflicts, specificity and explanation.
@@ -521,11 +545,18 @@ def rule_simulate(
 def rule_create(
     body: RuleCreate,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "assignment_rule.edit")),
     db: Session = Depends(get_db),
 ) -> RuleDraftCreated:
-    """Create a rule (draft version 1), optionally copying an existing rule version's conditions and settings."""
+    """Create a rule (draft version 1), optionally copying an existing rule version's conditions and settings.
+
+    SHARED-1: ``target_kind`` SURVEY_BINDING creates a rule that names no script — it can be bound to a published survey
+    and can never assign a script to a case. It needs ``shared_rule_services_enabled``."""
     _guard(request, auth)
+    if body.target_kind == ri.SURVEY_KIND and not request.app.state.settings.shared_rule_services_enabled:
+        raise AppError(
+            409, "SURVEY_ONLY_RULES_UNAVAILABLE", "Rules that select a survey only are not switched on for this server"
+        )
     try:
         did = ra.create_rule(
             db,
@@ -536,6 +567,7 @@ def rule_create(
             description=body.description,
             market=body.market,
             copy_from_rule_version_id=body.copy_from_rule_version_id,
+            target_kind=body.target_kind,
         )
     except ra.RuleAuthoringError as exc:
         db.rollback()
@@ -565,7 +597,7 @@ def rule_version_create(
     rule_code: str,
     body: RuleVersionCreate,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "assignment_rule.edit")),
     db: Session = Depends(get_db),
 ) -> RuleDraftCreated:
     """New draft version of a rule (one open draft per rule), from its live version or a chosen one."""
@@ -594,7 +626,7 @@ def rule_draft_update(
     draft_id: uuid.UUID,
     body: RuleDraftUpdate,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "assignment_rule.edit")),
     db: Session = Depends(get_db),
 ) -> RuleDraftChanged:
     _guard(request, auth)
@@ -620,7 +652,7 @@ def rule_draft_update(
 def rule_draft_validate(
     draft_id: uuid.UUID,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "assignment_rule.edit")),
     db: Session = Depends(get_db),
 ) -> RuleAnalysis:
     _guard(request, auth)
@@ -648,7 +680,7 @@ def rule_draft_submit(
     draft_id: uuid.UUID,
     body: RuleSubmitIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "assignment_rule.edit")),
     db: Session = Depends(get_db),
 ) -> RuleLifecycleOut:
     """Validate (conflicts and target eligibility), freeze the manifest (SHA-256) and lock the draft for review."""
@@ -687,7 +719,7 @@ def rule_draft_abandon(
     draft_id: uuid.UUID,
     body: RuleAbandonIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "assignment_rule.edit")),
     db: Session = Depends(get_db),
 ) -> RuleLifecycleOut:
     """Abandon a draft (its author or an editor, with a reason). Nothing is deleted."""
@@ -713,7 +745,7 @@ def rule_draft_review(
     draft_id: uuid.UUID,
     body: RuleReviewIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.approve")),
+    auth: AuthContext = Depends(require_any("script.approve", "assignment_rule.approve")),
     db: Session = Depends(get_db),
 ) -> RuleLifecycleOut:
     """Checker decision: approve, or return the rule to its author. Never your own rule."""
@@ -743,7 +775,7 @@ def rule_draft_publish(
     draft_id: uuid.UUID,
     body: RulePublishIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.publish")),
+    auth: AuthContext = Depends(require_any("script.publish", "assignment_rule.publish")),
     db: Session = Depends(get_db),
 ) -> RuleLifecycleOut:
     """Publish an approved rule after re-validating it against the current ruleset and target. Superseding the

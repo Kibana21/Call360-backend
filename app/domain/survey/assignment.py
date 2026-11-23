@@ -108,12 +108,13 @@ def binding(db: Session, bid: uuid.UUID, markets: Sequence[str], *, lock: bool =
 
 
 def _rule_version(db: Session, rule_code: str, version: int, markets: Sequence[str]) -> dict[str, Any]:
-    """A rule version of the EXISTING assignment rules, in the caller's markets (its market is its script family's)."""
+    """A rule version of the EXISTING assignment rules, in the caller's markets. SHARED-1: its market is the rule's
+    OWN; whether it names a script does not matter here — a survey binding is what gives it a survey."""
     row = _one(
         db,
-        "SELECT r.id, r.rule_code, r.version, r.status, f.market_code FROM script_assignment_rule_version r "
-        "JOIN script_version v ON v.id = r.target_script_version_id JOIN script_family f ON f.id = v.script_family_id "
-        "WHERE r.rule_code = :c AND r.version = :v AND f.market_code = ANY(:m)",
+        f"SELECT r.id, r.rule_code, r.version, r.status, {ri.RULE_MARKET_SQL} AS market_code, "
+        f"{ri.RULE_KIND_SQL} AS target_kind {ri.RULE_FROM_SQL}"
+        f"WHERE r.rule_code = :c AND r.version = :v AND {ri.RULE_MARKET_SQL} = ANY(:m)",
         c=rule_code, v=version, m=list(markets),
     )  # fmt: skip
     if row is None:
@@ -330,7 +331,8 @@ def candidates(db: Session, market: str, at: datetime) -> tuple[list[re_.RuleCan
     bound = _published_bindings(db, market)
     out: list[re_.RuleCandidate] = []
     used: dict[str, dict[str, Any]] = {}
-    for c in ri.published_candidates(db, [market], at):
+    # SHARED-1: survey selection considers every published rule of the market — script-backed, and survey-only
+    for c in ri.published_candidates(db, [market], at, ri.ALL_KINDS):
         b = bound.get((c.rule_code, c.version or 0))
         if b is None:
             # still a candidate with its full precedence: if it wins, the selection fails closed
@@ -412,15 +414,16 @@ def policy(db: Session, markets: Sequence[str]) -> dict[str, Any]:
         (r["rule_code"], r["version"]): r
         for r in _all(
             db,
-            "SELECT r.rule_code, r.version, r.id, p.name, f.market_code FROM script_assignment_rule_version r "
-            "JOIN script_version v ON v.id = r.target_script_version_id JOIN script_family f ON f.id = v.script_family_id "
-            "LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id WHERE f.market_code = ANY(:m)",
+            f"SELECT r.rule_code, r.version, r.id, p.name, {ri.RULE_MARKET_SQL} AS market_code, "
+            f"{ri.RULE_KIND_SQL} AS target_kind {ri.RULE_FROM_SQL}"
+            f"LEFT JOIN assignment_rule_publication p ON p.rule_version_id = r.id WHERE {ri.RULE_MARKET_SQL} = ANY(:m)",
             m=list(markets),
         )
     }
     rules = []
     for c in sorted(
-        ri.published_candidates(db, list(markets), at), key=lambda x: (x.priority, -x.specificity, x.rule_code, x.ref)
+        ri.published_candidates(db, list(markets), at, ri.ALL_KINDS),
+        key=lambda x: (x.priority, -x.specificity, x.rule_code, x.ref),
     ):
         if c.status != "PUBLISHED":
             continue
@@ -430,6 +433,7 @@ def policy(db: Session, markets: Sequence[str]) -> dict[str, Any]:
             {
                 "ref": c.ref, "rule_code": c.rule_code, "rule_version": c.version, "rule_version_id": meta.get("id"),
                 "name": meta.get("name") or c.rule_code, "market_code": meta.get("market_code"),
+                "target_kind": meta.get("target_kind") or ri.SCRIPT_KIND,
                 "priority": c.priority, "specificity": c.specificity, "is_fallback": c.is_fallback,
                 "effective_now": re_.effective_at(c, at), "effective_from": c.effective_from, "effective_to": c.effective_to,
                 "when": [re_.condition_text(x, labels) for x in c.conditions],

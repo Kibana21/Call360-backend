@@ -52,6 +52,10 @@ class SurveyAssignmentRule(BaseModel):
     effective_from: datetime | None
     effective_to: datetime | None
     when: list[str]
+    target_kind: Literal["SCRIPT_VERSION", "SURVEY_BINDING"] = Field(
+        default="SCRIPT_VERSION",
+        description="SHARED-1: SURVEY_BINDING = the rule names no script; it selects a survey only through a binding.",
+    )
     published_binding: uuid.UUID | None
     open_binding: uuid.UUID | None
 

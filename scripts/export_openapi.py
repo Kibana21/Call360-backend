@@ -36,6 +36,8 @@ def render() -> str:
         survey_control_policy_enabled=True,  # EVAL-2A: likewise
         survey_execution_assurance_enabled=True,  # EVAL-2B: likewise
         survey_module_authoring_enabled=True,  # LIB-2: likewise
+        shared_rule_services_enabled=True,  # SHARED-1: likewise
+        survey_applicability_prototype_enabled=True,  # APPL-X1: the stateless prototype operations
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

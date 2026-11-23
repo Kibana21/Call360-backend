@@ -35,7 +35,7 @@ from app.audit.chain import write_audit
 from app.core.errors import AppError
 from app.domain import finding_engine as fe
 from app.domain import finding_rules as fr
-from app.security.authz import AuthContext, get_db, request_meta, require
+from app.security.authz import AuthContext, get_db, request_meta, require_any
 
 router = APIRouter(prefix="/api/v1", tags=["finding-rules"])
 _ERR: dict[int | str, dict[str, Any]] = {code: {"model": ErrorResponse} for code in (401, 403, 404, 409, 422, 429)}
@@ -143,7 +143,7 @@ def _out(db: Session, v: dict[str, Any], auth: AuthContext) -> FindingRuleSetOut
     "/finding-rule-sets/options", response_model=FindingRuleOptions, operation_id="finding_rule_options", responses=_ERR
 )
 def finding_rule_options(
-    auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)
+    auth: AuthContext = Depends(require_any("script.read", "finding_rule.read")), db: Session = Depends(get_db)
 ) -> FindingRuleOptions:
     from sqlalchemy import text
 
@@ -168,7 +168,7 @@ def finding_rule_options(
 
 @router.get("/finding-rule-sets", response_model=FindingRuleSetList, operation_id="finding_rule_sets", responses=_ERR)
 def finding_rule_sets(
-    auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)
+    auth: AuthContext = Depends(require_any("script.read", "finding_rule.read")), db: Session = Depends(get_db)
 ) -> FindingRuleSetList:
     items = fr.versions(db, _markets(auth))
     pub = next((i for i in items if i["status"] == "PUBLISHED"), None)
@@ -186,7 +186,7 @@ def finding_rule_sets(
 def finding_rule_set_create(
     body: FindingRuleSetCreateIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "finding_rule.edit")),
     db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     """Open a new draft (a copy of the published rules, or empty)."""
@@ -208,7 +208,9 @@ def finding_rule_set_create(
     responses=_ERR,
 )
 def finding_rule_set_get(
-    version_id: uuid.UUID, auth: AuthContext = Depends(require("script.read")), db: Session = Depends(get_db)
+    version_id: uuid.UUID,
+    auth: AuthContext = Depends(require_any("script.read", "finding_rule.read")),
+    db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     try:
         return _out(db, fr.version(db, version_id, _markets(auth)), auth)
@@ -227,7 +229,7 @@ def finding_rule_set_update(
     version_id: uuid.UUID,
     body: FindingRuleSetUpdateIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "finding_rule.edit")),
     db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     """Replace the draft's rules (validated against the governed vocabularies; optimistic concurrency)."""
@@ -282,7 +284,7 @@ def finding_rule_set_submit(
     version_id: uuid.UUID,
     body: FindingRuleSetSubmitIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "finding_rule.edit")),
     db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     return _step(
@@ -308,7 +310,7 @@ def finding_rule_set_review(
     version_id: uuid.UUID,
     body: FindingRuleSetReviewIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.approve")),
+    auth: AuthContext = Depends(require_any("script.approve", "finding_rule.approve")),
     db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     """A different S&C checker approves the version or returns it to draft (the maker cannot review)."""
@@ -334,7 +336,7 @@ def finding_rule_set_review(
 def finding_rule_set_publish(
     version_id: uuid.UUID,
     request: Request,
-    auth: AuthContext = Depends(require("script.publish")),
+    auth: AuthContext = Depends(require_any("script.publish", "finding_rule.publish")),
     db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     """Publish an approved version (immutable from now on); the previous published version is superseded."""
@@ -360,7 +362,7 @@ def finding_rule_set_abandon(
     version_id: uuid.UUID,
     body: FindingRuleSetAbandonIn,
     request: Request,
-    auth: AuthContext = Depends(require("script.edit")),
+    auth: AuthContext = Depends(require_any("script.edit", "finding_rule.edit")),
     db: Session = Depends(get_db),
 ) -> FindingRuleSetOut:
     return _step(

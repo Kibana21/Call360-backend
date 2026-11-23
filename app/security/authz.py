@@ -159,3 +159,34 @@ def require(permission: str) -> Callable[..., AuthContext]:
 
     dependency.required_permission = permission  # type: ignore[attr-defined]
     return dependency
+
+
+def require_any(*permissions: str) -> Callable[..., AuthContext]:
+    """Route dependency: authenticated principal holding AT LEAST ONE of ``permissions`` (403 + audit otherwise).
+
+    SHARED-1: a shared capability accepts its own dedicated permission or the legacy one that governed it until now, so
+    that nobody who is authorised today loses access and a person given only the dedicated permission needs no other.
+    The first permission named is the one the route inventory has always reported; all of them are accepted."""
+    wanted = frozenset(permissions)
+
+    def dependency(request: Request, auth: AuthContext = Depends(authenticate)) -> AuthContext:
+        if auth.password_change_required:
+            raise AppError(403, "PASSWORD_CHANGE_REQUIRED", "Set your own password before continuing")
+        if not wanted & auth.permissions:
+            with request.app.state.session_factory() as db, db.begin():
+                write_audit(
+                    db,
+                    action="ACCESS.DENIED_FUNCTION",
+                    outcome="DENIED",
+                    actor=auth.actor,
+                    meta=request_meta(request),
+                    entity_type="route",
+                    entity_id=request.url.path[:64],
+                    reason="missing permission " + " or ".join(permissions),
+                )
+            raise AppError(403, "FORBIDDEN", "You do not have permission for this action")
+        return auth
+
+    dependency.required_permission = permissions[0]  # type: ignore[attr-defined]
+    dependency.accepted_permissions = permissions  # type: ignore[attr-defined]
+    return dependency

@@ -422,6 +422,7 @@ def test_synthetic_applications_are_selected_planned_and_simulated_by_the_existi
     )  # granted to no role
     # what the policy returns is what the page needs and nothing more of the rule: no script target, author, checker or draft
     assert set(policy["rules"][0]) == {
+        "target_kind",  # SHARED-1: whether the rule names a script at all — never which one
         "ref",
         "rule_code",
         "rule_version",
@@ -535,7 +536,7 @@ def bound(
 def decide(
     monkeypatch: pytest.MonkeyPatch, rules: list[re_.RuleCandidate], bindings: list[Any], inputs: dict[str, Any]
 ) -> dict[str, Any]:
-    monkeypatch.setattr(ri, "published_candidates", lambda _db, _m, _at: rules)
+    monkeypatch.setattr(ri, "published_candidates", lambda _db, _m, _at, _kinds=(): rules)
     monkeypatch.setattr(assignment, "_published_bindings", lambda _db, _m: dict(bindings))
     return assignment.select(None, "SG", inputs, datetime(2026, 11, 22, tzinfo=UTC))  # type: ignore[arg-type]
 

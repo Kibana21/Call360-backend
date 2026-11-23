@@ -43,6 +43,7 @@ PREFIXES = (
     "/api/v1/survey-assignment",  # ASG-1
     "/api/v1/survey-evaluation",  # EVAL-1
     "/api/v1/survey-module",  # LIB-2: standalone modules and the one-module test
+    "/api/v1/survey-applicability",  # APPL-X1: the stateless applicability prototype
 )
 
 
@@ -435,8 +436,9 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 1 read-only journey trace (E2E-1)
     # … and 1 read-only workspace summary (UX-HOME-1)
     # … and 4 of standalone modules (LIB-2): create, list, read, and the one-module test
-    assert len([o for o in ops if is_survey_path(o[1])]) == 76
-    assert len(ops) == 199 + 76  # the 199 operations of the accepted contract, and these
+    # … and 4 stateless operations of the applicability prototype (APPL-X1)
+    assert len([o for o in ops if is_survey_path(o[1])]) == 80
+    assert len(ops) == 199 + 80  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
@@ -452,5 +454,6 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 2 of E2E-1
     # … and 1 of UX-HOME-1
     # … and 9 of LIB-2 (eight of the module operations, and where a library component was written)
-    assert len(survey_schemas) == 116 and len(schemas) == 405 + 116
-    assert MIGRATION_HEAD == "0036_survey_module_authoring"
+    # … and 6 of APPL-X1 (five request bodies and one response of the stateless applicability prototype)
+    assert len(survey_schemas) == 122 and len(schemas) == 405 + 122
+    assert MIGRATION_HEAD == "0037_shared_rule_services"

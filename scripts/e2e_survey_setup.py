@@ -40,6 +40,12 @@ SG = (
     # LIB-2: an author of standalone modules, who may also run the engine to test what they wrote. Running the engine
     # is a permission of its own (SS-03B); an author is not given it by `survey.edit`.
     ("E2E_MODULE_AUTHOR", "E2E module author", "E2E_MODULE_AUTHOR_SG", "e2e.survey.moduleauthor", "E2E Module Author", (*EDIT, "survey.simulate")),
+    # SHARED-1: people who hold ONLY the dedicated permissions of a shared rule capability — no Script Studio and no
+    # Survey Studio permission at all — to show each capability can be governed on its own. Author and checker differ.
+    ("E2E_RULE_AUTHOR", "E2E rule author", "E2E_RULE_AUTHOR_SG", "e2e.survey.ruleauthor", "E2E Rule Author", ("assignment_rule.read", "assignment_rule.edit")),
+    ("E2E_RULE_CHECKER", "E2E rule checker", "E2E_RULE_CHECKER_SG", "e2e.survey.rulechecker", "E2E Rule Checker", ("assignment_rule.read", "assignment_rule.approve", "assignment_rule.publish")),
+    ("E2E_FINDING_AUTHOR", "E2E finding-rule author", "E2E_FINDING_AUTHOR_SG", "e2e.survey.findingauthor", "E2E Finding Author", ("finding_rule.read", "finding_rule.edit")),
+    ("E2E_FINDING_CHECKER", "E2E finding-rule checker", "E2E_FINDING_CHECKER_SG", "e2e.survey.findingchecker", "E2E Finding Checker", ("finding_rule.read", "finding_rule.approve", "finding_rule.publish")),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (
