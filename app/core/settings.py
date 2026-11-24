@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     # APPL-X3: persistent Applicability Policies — saved working drafts with their exact dependency snapshot. On only
     # when the library is on; OFF by default; needs migration 0039. No publication of policies (APPL-X4).
     applicability_policies_enabled: bool = False
+    # APPL-X4a: persistent synthetic scenarios, regression suites and recorded evaluation runs. On only when policies
+    # are on; OFF by default; needs migration 0040. No policy publication (APPL-X4b).
+    applicability_scenarios_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

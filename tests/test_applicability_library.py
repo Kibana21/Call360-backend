@@ -194,6 +194,7 @@ def test_the_library_is_off_by_default_and_adds_exactly_fourteen_operations(sett
     # with the library on, the schema must hold 0038; with it off, a schema still at 0037 serves everything else
     assert acceptable_migration_heads(settings.model_copy(update={"applicability_library_enabled": True})) == (
         MIGRATION_HEAD,
+        "0039_applicability_policy",
         "0038_applicability_library",
     )
     assert "0037_shared_rule_services" in acceptable_migration_heads(
@@ -1114,14 +1115,14 @@ def _objects(engine: Engine) -> tuple[list[str], list[str], list[str]]:
         tables = sorted(
             c.execute(
                 text(
-                    f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{T}' AND table_name LIKE 'applicability%' AND table_name NOT LIKE 'applicability_policy%'"
+                    f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{T}' AND table_name LIKE 'applicability%' AND table_name NOT LIKE 'applicability_policy%' AND table_name NOT LIKE 'applicability_scenario%' AND table_name NOT LIKE 'applicability_suite%' AND table_name NOT LIKE 'applicability_evaluation%'"
                 )
             ).scalars()
         )
         functions = sorted(
             c.execute(
                 text(
-                    f"SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{T}' AND p.proname LIKE 'applicability%' AND p.proname NOT LIKE 'applicability_policy%'"
+                    f"SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{T}' AND p.proname LIKE 'applicability%' AND p.proname NOT LIKE 'applicability_policy%' AND p.proname NOT LIKE 'applicability_scenario%' AND p.proname NOT LIKE 'applicability_suite%' AND p.proname NOT LIKE 'applicability_evaluation%'"
                 )
             ).scalars()
         )

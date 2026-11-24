@@ -16,6 +16,7 @@ from app.api import (
     admin_config,
     applicability_library,
     applicability_policies,
+    applicability_scenarios,
     assignment_rules,
     auth,
     case_detail,
@@ -100,8 +101,8 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0039_applicability_policy"
-#: Each of the last thirteen revisions only ADDS objects that are used when its own setting is on. A schema behind the
+MIGRATION_HEAD = "0040_applicability_scenarios"
+#: Each of the last fourteen revisions only ADDS objects that are used when its own setting is on. A schema behind the
 #: head therefore serves everything that is switched on correctly, and is accepted in exactly that case:
 #:   0027 (SS-03A, survey definitions)        — needed when `survey_definitions_enabled` is on;
 #:   0028 (LIB-1, server-issued codes)        — needed when `survey_library_enabled` is on;
@@ -116,8 +117,10 @@ MIGRATION_HEAD = "0039_applicability_policy"
 #:   0037 (SHARED-1, rules on their own)      — needed when `shared_rule_services_enabled` is on.
 #:   0038 (APPL-X2, applicability library)   — needed when `applicability_library_enabled` is on.
 #:   0039 (APPL-X3, applicability policies)  — needed when `applicability_policies_enabled` (with the library) is on.
+#:   0040 (APPL-X4a, scenarios, suites, runs) — needed when `applicability_scenarios_enabled` (with policies) is on.
 #: With a setting on, the schema must hold that setting's revision, or readiness fails closed.
 OPTIONAL_REVISIONS = (
+    "0040_applicability_scenarios",
     "0039_applicability_policy",
     "0038_applicability_library",
     "0037_shared_rule_services",
@@ -181,23 +184,29 @@ def applicability_policies_on(settings: Settings) -> bool:
     return settings.applicability_library_enabled and settings.applicability_policies_enabled
 
 
+def applicability_scenarios_on(settings: Settings) -> bool:
+    """Scenarios and suites are evaluated against saved policies: on only when policies are."""
+    return applicability_policies_on(settings) and settings.applicability_scenarios_enabled
+
+
 def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
     """The head, and every earlier revision down to the newest one that something switched on needs."""
     needed = (
-        0 if applicability_policies_on(settings)
-        else 1 if settings.applicability_library_enabled
-        else 2 if settings.shared_rule_services_enabled
-        else 3 if survey_module_authoring_on(settings)
-        else 4 if survey_execution_assurance_on(settings)
-        else 5 if survey_control_policy_on(settings)
-        else 6 if survey_evaluation_on(settings)
-        else 7 if survey_coordinated_simulation_on(settings)
-        else 8 if survey_assignment_groups_on(settings)
-        else 9 if survey_assignment_on(settings)
-        else 10 if survey_simulation_on(settings)
-        else 11 if survey_library_on(settings)
-        else 12 if settings.survey_definitions_enabled
-        else 13
+        0 if applicability_scenarios_on(settings)
+        else 1 if applicability_policies_on(settings)
+        else 2 if settings.applicability_library_enabled
+        else 3 if settings.shared_rule_services_enabled
+        else 4 if survey_module_authoring_on(settings)
+        else 5 if survey_execution_assurance_on(settings)
+        else 6 if survey_control_policy_on(settings)
+        else 7 if survey_evaluation_on(settings)
+        else 8 if survey_coordinated_simulation_on(settings)
+        else 9 if survey_assignment_groups_on(settings)
+        else 10 if survey_assignment_on(settings)
+        else 11 if survey_simulation_on(settings)
+        else 12 if survey_library_on(settings)
+        else 13 if settings.survey_definitions_enabled
+        else 14
     )  # fmt: skip
     return OPTIONAL_REVISIONS[: needed + 1]
 
@@ -315,6 +324,10 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
     if applicability_policies_on(settings):
         # APPL-X3: off by default; needs 0039. Saved policy DRAFTS and their dependency snapshots. No publication.
         app.include_router(applicability_policies.router)
+    if applicability_scenarios_on(settings):
+        # APPL-X4a: off by default; needs 0040. Saved synthetic scenarios, regression suites and immutable recorded
+        # evaluation runs. No policy publication (APPL-X4b); nothing operational is read or written.
+        app.include_router(applicability_scenarios.router)
     return app
 
 

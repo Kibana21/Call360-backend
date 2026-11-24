@@ -109,11 +109,18 @@ def csrf_header(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": client.cookies.get("c360_csrf") or ""}
 
 
+#: APPL-X4a (0040): scenarios, suites and recorded runs. A downgrade below 0040 removes them (only while empty).
+SCENARIO_TABLES = (
+    "applicability_scenario", "applicability_scenario_dependency", "applicability_suite", "applicability_suite_member",
+    "applicability_scenario_event", "applicability_evaluation_run", "applicability_evaluation_result",
+)  # fmt: skip
 #: APPL-X2 (0038) and APPL-X3 (0039): the applicability tables. A downgrade below 0038 removes them all.
 APPLICABILITY_TABLES = frozenset(
     {
         "applicability_asset", "applicability_asset_version", "applicability_asset_dependency", "applicability_event",
         # APPL-X3 (migration 0039): saved applicability policies
         "applicability_policy", "applicability_policy_dependency", "applicability_policy_event",
+        # APPL-X4a (migration 0040): scenarios, suites and recorded runs
+        *SCENARIO_TABLES,
     }
 )  # fmt: skip

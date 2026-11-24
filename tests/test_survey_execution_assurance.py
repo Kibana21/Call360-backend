@@ -972,7 +972,7 @@ def test_assurance_is_off_by_default_and_its_migration_is_additive(
 
     # ---- a recorded assurance result is not destroyed by a downgrade
     full, structure = state(), others()
-    assert set(TABLES) <= full[0] and full[1] == "0039_applicability_policy"
+    assert set(TABLES) <= full[0] and full[1] == "0040_applicability_scenarios"
     db.rollback()
     with pytest.raises(RuntimeError, match="recorded execution-assurance results exist"):
         migrate(settings, "0034_survey_control_policy", down=True)

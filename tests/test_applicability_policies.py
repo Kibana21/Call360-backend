@@ -27,7 +27,7 @@ from app.domain.survey.applicability import policies as pol
 from app.domain.survey.applicability.logic import Workspace
 from app.domain.survey.canonical import sha256_hex
 from app.main import MIGRATION_HEAD, acceptable_migration_heads, create_app
-from tests.support import ORIGIN, csrf_header, make_account, migrate
+from tests.support import ORIGIN, SCENARIO_TABLES, csrf_header, make_account, migrate
 from tests.test_applicability_library import BOOL, FAMILY, A, check, created, published, ref, revise
 from tests.test_applicability_library import put as put_asset
 from tests.test_survey_api import GRANTS, MARKETS, _client, post, with_grants
@@ -63,7 +63,7 @@ def empty(engine: Engine) -> None:
         if c.execute(text(f"SELECT to_regclass('{T}.applicability_policy')")).scalar_one() is not None:
             c.execute(
                 text(
-                    f"TRUNCATE {T}.applicability_policy_event, {T}.applicability_policy_dependency, {T}.applicability_policy"
+                    f"TRUNCATE {T}.applicability_policy_event, {T}.applicability_policy_dependency, {T}.applicability_policy CASCADE"
                 )
             )
         if c.execute(text(f"SELECT to_regclass('{T}.applicability_asset')")).scalar_one() is not None:
@@ -206,7 +206,8 @@ def test_policies_are_off_by_default_need_the_library_and_add_ten_operations(
     assert not routes(alone)  # without the library there is nothing for a policy to read
     assert len(routes(x3_app)) == 10, sorted(routes(x3_app))
     on = settings.model_copy(update={"applicability_library_enabled": True, "applicability_policies_enabled": True})
-    assert MIGRATION_HEAD == "0039_applicability_policy" and acceptable_migration_heads(on) == (MIGRATION_HEAD,)
+    # APPL-X4a moved the head to 0040; with scenarios off, a schema at 0039 serves saved policies
+    assert acceptable_migration_heads(on) == (MIGRATION_HEAD, "0039_applicability_policy")
     assert "0038_applicability_library" in acceptable_migration_heads(
         settings.model_copy(update={"applicability_library_enabled": True})
     )
@@ -810,8 +811,9 @@ def _everything_else(engine: Engine) -> dict[str, tuple[int, str]]:
     with engine.connect() as c:
         names = c.execute(
             text(
-                f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{T}' AND table_type = 'BASE TABLE' AND table_name NOT LIKE 'applicability_policy%' AND table_name <> 'alembic_version'"
-            )
+                f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{T}' AND table_type = 'BASE TABLE' AND table_name NOT LIKE 'applicability_policy%' AND table_name <> ALL(:later) AND table_name <> 'alembic_version'"
+            ),
+            {"later": list(SCENARIO_TABLES)},  # APPL-X4a's tables come and go with 0040, above this revision
         ).scalars()
         for name in sorted(names):
             row = c.execute(
@@ -878,6 +880,9 @@ def test_zz_migration_0039_is_additive_reversible_while_empty_atomic_and_keeps_s
         kept = made(p["author"], "KEPT", document(req("r1", ref("ilp"), a)))
         with pytest.raises(RuntimeError, match="applicability policies exist"):
             migrate(settings, "0038_applicability_library", down=True)
+        # 0040 (no scenario, suite or run) rolled back first; 0039 refused: the saved policy is intact
+        assert _head(engine) == "0039_applicability_policy"
+        migrate(settings, "head")
         assert _head(engine) == MIGRATION_HEAD and read(p["author"], kept["id"])["document"] == kept["document"]
         assert pol.consistent(db, uuid.UUID(kept["id"]))
         after = _everything_else(engine)

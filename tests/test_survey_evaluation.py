@@ -1159,7 +1159,7 @@ def test_zz_migration_0033_goes_down_and_up_and_changes_nothing_else(
 
     full = state()
     assert set(EVALUATION_TABLES) <= full[0] and full[1:] == (
-        "0039_applicability_policy",
+        "0040_applicability_scenarios",
         2,
         0,
     )  # granted to nobody

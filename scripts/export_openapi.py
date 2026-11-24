@@ -40,6 +40,7 @@ def render() -> str:
         survey_applicability_prototype_enabled=True,  # APPL-X1: the stateless prototype operations
         applicability_library_enabled=True,  # APPL-X2: the governed applicability library
         applicability_policies_enabled=True,  # APPL-X3: persistent applicability policies (drafts)
+        applicability_scenarios_enabled=True,  # APPL-X4a: scenarios, suites and recorded runs
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

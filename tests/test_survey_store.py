@@ -25,7 +25,7 @@ from tests.support import APPLICABILITY_TABLES, Account, make_account, migrate
 from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
 HEAD, BEFORE = (
-    "0039_applicability_policy",
+    "0040_applicability_scenarios",
     "0026_gpt_live_provider",
 )  # 0027 … 0036 are survey-only; 0037 adds two columns to rules; 0038 adds the applicability library
 SURVEY_TABLES = {

@@ -440,8 +440,9 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     assert len([o for o in ops if is_survey_path(o[1])]) == 80
     # … and, outside the survey paths, the 14 operations of the governed applicability library (APPL-X2)
     # … and the 10 of saved applicability policies (APPL-X3), under the same prefix
-    assert len([o for o in ops if o[1].startswith("/api/v1/applicability/")]) == 14 + 10
-    assert len(ops) == 199 + 80 + 14 + 10  # the 199 operations of the accepted contract, and these
+    # … and the 22 of saved scenarios, regression suites and recorded runs (APPL-X4a)
+    assert len([o for o in ops if o[1].startswith("/api/v1/applicability/")]) == 14 + 10 + 22
+    assert len(ops) == 199 + 80 + 14 + 10 + 22  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
@@ -461,6 +462,7 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and, under their own name, those of the applicability library (APPL-X2):
     # … 21 of APPL-X2 and 1 for the reviewed pins a submitter acknowledges (owner ruling A4)
     # … and 15 of saved applicability policies (APPL-X3)
-    assert len([k for k in schemas if k.startswith("Applicability")]) == 22 + 15
-    assert len(survey_schemas) == 122 and len(schemas) == 405 + 122 + 22 + 15
-    assert MIGRATION_HEAD == "0039_applicability_policy"
+    # … and 35 of saved scenarios, suites and recorded runs (APPL-X4a)
+    assert len([k for k in schemas if k.startswith("Applicability")]) == 22 + 15 + 35
+    assert len(survey_schemas) == 122 and len(schemas) == 405 + 122 + 22 + 15 + 35
+    assert MIGRATION_HEAD == "0040_applicability_scenarios"

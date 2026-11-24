@@ -613,7 +613,7 @@ def test_zz_migration_0032_goes_down_and_up_and_changes_nothing_else(
             ), c.execute(text("SELECT version_num FROM call360_test.alembic_version")).scalar_one()
 
     full = state()
-    assert mine <= full[0] and full[1] == "0039_applicability_policy"
+    assert mine <= full[0] and full[1] == "0040_applicability_scenarios"
     migrate(settings, "0031_survey_assignment_groups", down=True)
     assert state() == (full[0] - mine - APPLICABILITY_TABLES, "0031_survey_assignment_groups")
     migrate(settings, "head")

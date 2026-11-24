@@ -167,6 +167,16 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
         "applicability_policy_dependency",
         "applicability_policy_event",
     ),
+    # APPL-X4a: saved synthetic scenarios, regression suites and immutable recorded evaluation runs
+    "0040_applicability_scenarios": (
+        "applicability_scenario",
+        "applicability_scenario_dependency",
+        "applicability_suite",
+        "applicability_suite_member",
+        "applicability_scenario_event",
+        "applicability_evaluation_run",
+        "applicability_evaluation_result",
+    ),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 
