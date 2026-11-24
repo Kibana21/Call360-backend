@@ -30,7 +30,7 @@ from app.audit.chain import verify_chain
 from app.core.settings import Settings
 from app.domain.survey import store
 from app.main import create_app
-from tests.support import make_account
+from tests.support import APPLICABILITY_TABLES, make_account
 from tests.survey_support import actor_of
 from tests.test_assignment_rules import business_fingerprint
 from tests.test_survey_api import GRANTS, MARKETS, _client, post, with_grants
@@ -769,6 +769,7 @@ def test_zz_migration_0031_goes_down_and_up_empty_and_refuses_while_a_governed_g
     assert state() == (
         full[0]
         - mine
+        - APPLICABILITY_TABLES
         - {"survey_coordinated_simulation", "survey_coordinated_simulation_step"}
         - {
             "survey_control_mapping",

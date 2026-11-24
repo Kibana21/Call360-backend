@@ -25,7 +25,6 @@ from app.domain.survey.applicability.logic import (
 from app.domain.survey.canonical import sha256_hex
 
 MAX_REQUIREMENTS = 200
-SAME_SURVEY = ("ONE_DELIVERY", "CONFLICT")
 STATE = {TRUE: "APPLIES", FALSE: "DOES_NOT_APPLY", UNKNOWN: "UNRESOLVED"}
 ALWAYS: dict[str, Any] = {"op": "all", "path": "", "result": TRUE, "children": [], "text": "always"}
 
@@ -89,7 +88,9 @@ def bundle(ws: Workspace, policy: dict[str, Any]) -> dict[str, Any]:
         v = ws.variables.get(code)
         if v is not None:
             variables[code] = {k: v.get(k) for k in ("type", "values", "currency", "min", "max", "derived", "version")}
-    body = {k: policy.get(k) for k in ("code", "market", "profiles", "scope", "same_survey", "requirements", "order")}
+    body = {
+        k: policy.get(k) for k in ("code", "market", "profiles", "scope", "shared_deliveries", "requirements", "order")
+    }
     return {"contract": CONTRACT, "policy": body, "variables": variables, "conditions": conditions}
 
 
@@ -102,12 +103,14 @@ def _choose(ev: Evaluation, req: dict[str, Any]) -> dict[str, Any]:
     alts = []
     for i, a in enumerate((req.get("action") or {}).get("alternatives") or []):
         when = a.get("when")
-        trace = ev.expr(dict(when), f"alt{i}") if when else None
+        fallback = bool(a.get("fallback"))
+        trace = ev.expr(dict(when), f"alt{i}") if when and not fallback else None
         alts.append(
             {
                 "index": i,
                 "survey": dict(a.get("survey") or {}),
-                "otherwise": when is None,
+                "otherwise": fallback,
+                "missing_criterion": not when and not fallback,
                 "trace": trace,
                 "result": trace["result"] if trace else None,
             }
@@ -143,7 +146,9 @@ def evaluate(
     ids = [str(r.get("id")) for r in reqs]
     if len(set(ids)) != len(ids):
         raise ApplicabilityError("DUPLICATE_REQUIREMENT", "Two requirements share an identifier")
-    ev = Evaluation(ws, facts, list(profiles or policy.get("profiles") or []) or None)
+    # Profiles describe an application; they never decide whether a policy applies. Only the profiles an application
+    # itself states are used, and only to check its facts. A policy's reach is its explicit `scope`.
+    ev = Evaluation(ws, facts, list(profiles or []) or None)
     diagnostics: list[dict[str, Any]] = []
     head = {
         "contract": CONTRACT,
@@ -169,7 +174,7 @@ def evaluate(
                 except ApplicabilityError:
                     continue
         for code, f in states.items():
-            if f["state"] in ("INVALID", "UNSUPPORTED"):
+            if f["state"] == "INVALID":
                 diagnostics.append(
                     {
                         "severity": "WARNING",
@@ -220,7 +225,27 @@ def evaluate(
                 )
             replaced_by[target].append(rid)
 
-    # ---- replacement, from the top: a requirement that is itself replaced replaces nothing
+    # ---- a circle of replacements is an error of its own (it is also a chain; say the more precise thing)
+    for rid in rows:
+        seen_ids, todo = set(), list(rows[rid]["replaces"])
+        while todo:
+            t = todo.pop()
+            if t == rid:
+                raise ApplicabilityError("REPLACEMENT_CYCLE", "Requirements replace each other in a circle", rid)
+            if t not in seen_ids:
+                seen_ids.add(t)
+                todo.extend(rows[t]["replaces"])
+    # ---- AP-1: a replacement names its FINAL targets. A chain (the replaced requirement itself replaces something)
+    # is refused, never resolved by a rule the author did not write.
+    for rid, row in rows.items():
+        for target in row["replaces"]:
+            if rows[target]["replaces"]:
+                raise ApplicabilityError(
+                    "REPLACEMENT_CHAIN",
+                    f"'{row['name']}' replaces '{rows[target]['name']}', which itself replaces another requirement. "
+                    "Name the final targets on one requirement",
+                    rid,
+                )
     visiting: list[str] = []
 
     def outcome(rid: str) -> str:
@@ -288,13 +313,17 @@ def evaluate(
             for ref in [choice["chosen"]] if choice and choice["outcome"] == "CHOSEN" else row["surveys"]:
                 add(pending, ref, rid)
 
-    # ---- the same survey required more than once: only the meaning the policy states
-    mode = policy.get("same_survey")
+    # ---- AP-2: the same survey required by several requirements is never merged silently. It is one delivery only
+    # where the author said so FOR THOSE REQUIREMENTS; every contributing requirement stays on the record.
+    shared: list[tuple[str, set[str]]] = [
+        (str(d.get("survey")), {str(x) for x in d.get("requirements") or []})
+        for d in policy.get("shared_deliveries") or []
+    ]
     for key, entry in selected.items():
         label = entry["survey"].get("name") or key
         if len(entry["versions"]) > 1:
-            versions = ", ".join(str(v) for v in entry["versions"])
             unresolved = True
+            versions = ", ".join(str(v) for v in entry["versions"])
             diagnostics.append(
                 {
                     "severity": "BLOCKER",
@@ -305,33 +334,30 @@ def evaluate(
             )
         if len(entry["required_by"]) > 1:
             names = ", ".join(f"‘{rows[r]['name']}’" for r in entry["required_by"])
-            if mode == "ONE_DELIVERY":
+            agreed = any(code == key and set(entry["required_by"]) <= members for code, members in shared)
+            if agreed:
                 entry["obligations"] = len(entry["required_by"])
                 diagnostics.append(
                     {
                         "severity": "INFO",
-                        "code": "SURVEY_REQUIRED_BY_SEVERAL",
+                        "code": "SURVEY_SHARED_DELIVERY",
                         "survey": key,
-                        "message": f"{label} is required by {names}. It is delivered once and satisfies each of them.",
+                        "requirements": list(entry["required_by"]),
+                        "message": f"{label} is required by {names}. As stated in this policy, one delivery satisfies each of them.",  # noqa: E501
                     }
                 )
             else:
                 unresolved = True
-                code = "SAME_SURVEY_CONFLICT" if mode == "CONFLICT" else "SAME_SURVEY_MODE_MISSING"
-                tail = (
-                    "This policy treats that as a conflict."
-                    if mode == "CONFLICT"
-                    else "This policy does not say what that means."
-                )
+                entry["conflict"] = True
                 diagnostics.append(
                     {
                         "severity": "BLOCKER",
-                        "code": code,
+                        "code": "DUPLICATE_SURVEY",
                         "survey": key,
-                        "message": f"{entry['survey'].get('name') or key} is required by {names}. {tail}",
+                        "requirements": list(entry["required_by"]),
+                        "message": f"{label} is required by {names}. Nothing says whether that is one delivery or several: resolve it for these requirements.",  # noqa: E501
                     }
                 )
-                entry["conflict"] = True
 
     # ---- the governed order: where each selected survey goes; never which surveys
     order = [str(k) for k in policy.get("order") or []]
@@ -351,7 +377,12 @@ def evaluate(
                     "message": f"{name(e)} has no place in the delivery order.",
                 }
             )
-    waiting = [dict(e, versions=None) for k, e in sorted(pending.items()) if k not in selected]
+    # pending surveys in the governed delivery order too
+    waiting = [
+        dict(e, versions=None)
+        for k, e in sorted(pending.items(), key=lambda kv: (position.get(kv[0], len(order)), kv[0]))
+        if k not in selected
+    ]
     for e in waiting:
         e.pop("versions", None)
 

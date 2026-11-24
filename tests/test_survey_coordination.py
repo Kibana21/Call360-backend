@@ -23,7 +23,7 @@ from app.audit.chain import verify_chain
 from app.core.settings import Settings
 from app.domain.survey import simulation
 from app.main import create_app
-from tests.support import make_account
+from tests.support import APPLICABILITY_TABLES, make_account
 from tests.survey_fixtures import load_all
 from tests.test_assignment_rules import business_fingerprint
 from tests.test_survey_api import GRANTS, MARKETS, _client, post, with_grants
@@ -613,8 +613,8 @@ def test_zz_migration_0032_goes_down_and_up_and_changes_nothing_else(
             ), c.execute(text("SELECT version_num FROM call360_test.alembic_version")).scalar_one()
 
     full = state()
-    assert mine <= full[0] and full[1] == "0037_shared_rule_services"
+    assert mine <= full[0] and full[1] == "0039_applicability_policy"
     migrate(settings, "0031_survey_assignment_groups", down=True)
-    assert state() == (full[0] - mine, "0031_survey_assignment_groups")
+    assert state() == (full[0] - mine - APPLICABILITY_TABLES, "0031_survey_assignment_groups")
     migrate(settings, "head")
     assert state() == full

@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # evaluator on documents sent in the request. OFF by default; needs no migration and no table; reads and writes
     # nothing. With it off the routes do not exist.
     survey_applicability_prototype_enabled: bool = False
+    # APPL-X2: the governed Applicability library — persisted variables, application profiles and reusable
+    # conditions with three-person publication. OFF by default; needs migration 0038. Applicability POLICIES are not
+    # stored (APPL-X3) and nothing here selects a survey for a case.
+    applicability_library_enabled: bool = False
+    # APPL-X3: persistent Applicability Policies — saved working drafts with their exact dependency snapshot. On only
+    # when the library is on; OFF by default; needs migration 0039. No publication of policies (APPL-X4).
+    applicability_policies_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

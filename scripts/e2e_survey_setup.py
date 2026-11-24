@@ -46,6 +46,13 @@ SG = (
     ("E2E_RULE_CHECKER", "E2E rule checker", "E2E_RULE_CHECKER_SG", "e2e.survey.rulechecker", "E2E Rule Checker", ("assignment_rule.read", "assignment_rule.approve", "assignment_rule.publish")),
     ("E2E_FINDING_AUTHOR", "E2E finding-rule author", "E2E_FINDING_AUTHOR_SG", "e2e.survey.findingauthor", "E2E Finding Author", ("finding_rule.read", "finding_rule.edit")),
     ("E2E_FINDING_CHECKER", "E2E finding-rule checker", "E2E_FINDING_CHECKER_SG", "e2e.survey.findingchecker", "E2E Finding Checker", ("finding_rule.read", "finding_rule.approve", "finding_rule.publish")),
+    # APPL-X2: the governed applicability library has permissions of its own (migration 0038), held by NO standing role.
+    # Three people who each hold only their part of it, beside what they need to open Survey Studio and its surveys.
+    ("E2E_APPL_AUTHOR", "E2E applicability author", "E2E_APPL_AUTHOR_SG", "e2e.survey.applauthor", "E2E Applicability Author", (*EDIT, ASG, EVR, EVL, "applicability.read", "applicability.edit")),
+    # APPL-X3: a second person who may edit applicability, to show two people saving the same policy
+    ("E2E_APPL_AUTHOR", "E2E applicability author", "E2E_APPL_AUTHOR2_SG", "e2e.survey.applsecond", "E2E Second Applicability Author", ("survey.read", "applicability.read", "applicability.edit")),
+    ("E2E_APPL_CHECKER", "E2E applicability checker", "E2E_APPL_CHECKER_SG", "e2e.survey.applchecker", "E2E Applicability Checker", ("survey.read", "applicability.read", "applicability.approve")),
+    ("E2E_APPL_PUBLISHER", "E2E applicability publisher", "E2E_APPL_PUBLISHER_SG", "e2e.survey.applpublisher", "E2E Applicability Publisher", ("survey.read", "applicability.read", "applicability.publish")),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (

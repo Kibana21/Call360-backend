@@ -761,24 +761,29 @@ def test_zz_migration_0030_goes_down_and_up_empty_and_refuses_while_a_governed_b
     full = state()
     migrate(settings, "0029_survey_simulation", down=True)
     down = state()
-    assert down[0] == {
-        t
-        for t in full[0]
-        # … and everything above 0030 that goes down with it (ASG-2A, ASG-2B, EVAL-1): simulation and governance tables
-        if not t.startswith(
-            (
-                "survey_assignment",
-                "survey_composite",
-                "survey_coordinated",
-                "survey_control",
-                "survey_journey",
-                "survey_evidence",
-                "survey_evaluation",
-                "survey_obligation",
-                "survey_execution",
+    assert (
+        down[0]
+        == {
+            t
+            for t in full[0]
+            # … and everything above 0030 that goes down with it (ASG-2A, ASG-2B, EVAL-1): simulation and governance tables
+            if not t.startswith(
+                (
+                    "survey_assignment",
+                    "survey_composite",
+                    "survey_coordinated",
+                    "survey_control",
+                    "survey_journey",
+                    "survey_evidence",
+                    "survey_evaluation",
+                    "survey_obligation",
+                    "survey_execution",
+                    "applicability_",  # 0038, above everything here
+                )
             )
-        )
-    } and down[1:] == ("0029_survey_simulation", 0, 0)
+        }
+        and down[1:] == ("0029_survey_simulation", 0, 0)
+    )
     assert mine.isdisjoint(down[0])
     migrate(settings, "head")
     assert state() == full

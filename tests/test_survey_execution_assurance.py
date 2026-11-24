@@ -23,7 +23,7 @@ from app.domain.survey import execution_assurance as ea
 from app.domain.survey import simulation as simulation_module
 from app.domain.survey.execution import execute_inputs
 from app.main import create_app
-from tests.support import make_account
+from tests.support import APPLICABILITY_TABLES, make_account
 from tests.survey_fixtures import load_all, to_bundle
 from tests.test_survey_api import GRANTS, MARKETS, _client, post, with_grants
 from tests.test_survey_api import trio as _trio  # noqa: F401
@@ -966,18 +966,18 @@ def test_assurance_is_off_by_default_and_its_migration_is_additive(
 
     def others() -> list[Any]:
         with engine.connect() as cx:
-            return [tuple(r) for r in cx.execute(text("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'call360_test' AND table_name NOT LIKE 'survey_execution_assurance%' AND table_name <> 'alembic_version' AND column_name <> 'artifact_kind' AND NOT (table_name IN ('script_assignment_rule_version', 'assignment_rule_draft') AND column_name IN ('market_code', 'target_kind')) ORDER BY 1, 2"))] + [
-                tuple(r) for r in cx.execute(text("SELECT r.relname, k.conname, pg_get_constraintdef(k.oid) FROM pg_constraint k JOIN pg_class r ON r.oid = k.conrelid JOIN pg_namespace n ON n.oid = r.relnamespace WHERE n.nspname = 'call360_test' AND r.relname NOT LIKE 'survey_execution_assurance%' AND k.conname NOT IN ('ck_survey_definition_artifact_kind', 'ck_assignment_rule_target_kind', 'ck_assignment_rule_draft_target_kind', 'ck_assignment_rule_draft_frozen') AND NOT (r.relname = 'script_assignment_rule_version' AND k.contype = 'n') ORDER BY 1, 2"))
+            return [tuple(r) for r in cx.execute(text("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'call360_test' AND table_name NOT LIKE 'applicability%' AND table_name NOT LIKE 'survey_execution_assurance%' AND table_name <> 'alembic_version' AND column_name <> 'artifact_kind' AND NOT (table_name IN ('script_assignment_rule_version', 'assignment_rule_draft') AND column_name IN ('market_code', 'target_kind')) ORDER BY 1, 2"))] + [
+                tuple(r) for r in cx.execute(text("SELECT r.relname, k.conname, pg_get_constraintdef(k.oid) FROM pg_constraint k JOIN pg_class r ON r.oid = k.conrelid JOIN pg_namespace n ON n.oid = r.relnamespace WHERE r.relname NOT LIKE 'applicability%' AND n.nspname = 'call360_test' AND r.relname NOT LIKE 'survey_execution_assurance%' AND k.conname NOT IN ('ck_survey_definition_artifact_kind', 'ck_assignment_rule_target_kind', 'ck_assignment_rule_draft_target_kind', 'ck_assignment_rule_draft_frozen') AND NOT (r.relname = 'script_assignment_rule_version' AND k.contype = 'n') ORDER BY 1, 2"))
             ]  # fmt: skip
 
     # ---- a recorded assurance result is not destroyed by a downgrade
     full, structure = state(), others()
-    assert set(TABLES) <= full[0] and full[1] == "0037_shared_rule_services"
+    assert set(TABLES) <= full[0] and full[1] == "0039_applicability_policy"
     db.rollback()
     with pytest.raises(RuntimeError, match="recorded execution-assurance results exist"):
         migrate(settings, "0034_survey_control_policy", down=True)
-    # 0037 and 0036 (no survey-only rule or standalone module here) rolled back first; 0035 then refused
-    assert state() == (full[0], "0035_survey_execution_assurance")
+    # 0038 (an empty applicability library), 0037 and 0036 (no survey-only rule or standalone module here) rolled back first; 0035 then refused
+    assert state() == (full[0] - APPLICABILITY_TABLES, "0035_survey_execution_assurance")
     migrate(settings, "head")
     assert state() == full and trio_[0].get(f"{E}/assurance/{a['id']}").json()["result_sha256"] == a["result_sha256"]
     for cx in trio_:
@@ -994,6 +994,7 @@ def test_assurance_is_off_by_default_and_its_migration_is_additive(
         seed(cx, settings.target_schema, DataProtection.from_settings(settings))
     full, structure = state(), others()
     migrate(settings, "0034_survey_control_policy", down=True)
-    assert state() == (full[0] - set(TABLES), "0034_survey_control_policy") and others() == structure
+    assert state() == (full[0] - set(TABLES) - APPLICABILITY_TABLES, "0034_survey_control_policy")
+    assert others() == structure
     migrate(settings, "head")
     assert state() == full and others() == structure

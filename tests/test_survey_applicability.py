@@ -92,10 +92,11 @@ def req(rid: str, when: Any, *letters: str, replaces: tuple[str, ...] = (), name
 
 
 def policy(
-    *reqs: dict[str, Any], same: str | None = "ONE_DELIVERY", order: str = "ABCDE", **more: Any
+    *reqs: dict[str, Any], shared: tuple[tuple[str, tuple[str, ...]], ...] = (), order: str = "ABCDE", **more: Any
 ) -> dict[str, Any]:
-    return {"code": "P", "name": "Test policy", "market": "SG", "version": 1, "status": "DRAFT", "profiles": [],
-            "scope": None, "same_survey": same, "requirements": list(reqs), "order": [f"S-{x}" for x in order], **more}  # fmt: skip
+    return {"code": "P", "name": "Test policy", "market": "SG", "version": 1, "status": "DRAFT", "profiles": [], "scope": None,
+            "shared_deliveries": [{"survey": f"S-{k}", "requirements": list(r)} for k, r in shared],
+            "requirements": list(reqs), "order": [f"S-{x}" for x in order], **more}  # fmt: skip
 
 
 def run(p: dict[str, Any], facts: dict[str, Any], profiles: list[str] | None = None) -> dict[str, Any]:
@@ -159,10 +160,11 @@ def test_the_reasons_a_fact_is_not_usable_stay_distinct() -> None:
     states = {c: ev.fact(c)["state"] for c in ("product_family", "nftf", "channel", "annual_premium")}
     assert states == {
         "product_family": "INVALID",
-        "nftf": "UNSUPPORTED",
+        "nftf": "UNKNOWN",
         "channel": "NOT_PROVIDED",
         "annual_premium": "INVALID",
     }
+    assert ev.fact("nftf")["outside_profiles"] is True and "outside_profiles" not in ev.fact("channel")
     assert "not SGD" in ev.fact("annual_premium")["reason"]
     assert Evaluation(ws(), {"nftf": None}).fact("nftf")["state"] == "UNKNOWN"
     # a derived fact is known when its source is, unknown when it is not — never guessed
@@ -228,20 +230,23 @@ def test_case_4_explicit_replacement_removes_only_the_named_requirements() -> No
     }
     # the replacer does not apply: nothing is replaced
     assert picked(run(p, {**ILP_YES, "nftf": False})) == ["A", "D"]
-    # a replaced requirement replaces nothing: if X replaces c, a and b come back
-    chain = policy(*p["requirements"], req("x", ILP, "E", replaces=("c",)))
-    assert outcomes(run(chain, {**ILP_YES, "nftf": True})) == {
-        "a": "ACTIVE",
-        "b": "ACTIVE",
-        "d": "ACTIVE",
-        "c": "REPLACED",
+    # AP-1: a chain is refused — by validation, with the fix named, and by the evaluator. Nothing transitive is applied
+    chain = policy(*p["requirements"], req("x", ILP, "E", replaces=("c",), name="X"))
+    blockers = [d for d in A.analyse_policy(ws(), chain) if d["severity"] == "BLOCKER"]
+    assert [d["code"] for d in blockers] == ["REPLACEMENT_CHAIN"] and "Chains are not allowed" in blockers[0]["message"]
+    assert blockers[0]["at"] == {"kind": "requirement", "id": "x", "part": "replaces"}
+    with pytest.raises(ApplicabilityError) as exc:
+        run(chain, {**ILP_YES, "nftf": True})
+    assert exc.value.code == "REPLACEMENT_CHAIN"
+    # the explicit form: X names every final target itself
+    flat = policy(*p["requirements"][:3], req("x", BOTH, "E", replaces=("a", "b", "d"), name="X"))
+    assert not [d for d in A.analyse_policy(ws(), flat) if d["severity"] == "BLOCKER"]
+    assert outcomes(run(flat, {**ILP_YES, "nftf": True})) == {
+        "a": "REPLACED",
+        "b": "REPLACED",
+        "d": "REPLACED",
         "x": "ACTIVE",
     }
-    # …which validation shows the author, together with the fact that c now never contributes
-    assert [d["code"] for d in A.analyse_policy(ws(), chain) if d["severity"] == "WARNING"] == [
-        "REPLACEMENT_CHAIN",
-        "ALWAYS_REPLACED",
-    ]
 
 
 def test_case_5_one_condition_several_surveys() -> None:
@@ -253,14 +258,19 @@ def test_case_6_choose_one_is_never_decided_by_list_order() -> None:
     direct = {"op": "test", "variable": "channel", "operator": "equals", "value": "DIRECT"}
 
     def choose(*alts: tuple[str, Any]) -> dict[str, Any]:
-        return policy({"id": "x", "name": "Pick one", "when": ILP,
-                       "action": {"kind": "CHOOSE_ONE", "alternatives": [{"survey": S(k), "when": w} for k, w in alts]}})  # fmt: skip
+        rows = [
+            {"survey": S(k), "when": None, "fallback": True} if w == "FALLBACK" else {"survey": S(k), "when": w}
+            for k, w in alts
+        ]
+        return policy(
+            {"id": "x", "name": "Pick one", "when": ILP, "action": {"kind": "CHOOSE_ONE", "alternatives": rows}}
+        )
 
     p = choose(("A", high), ("B", direct))
     facts = {**ILP_YES, "annual_premium": 60000, "channel": "AGENCY"}
-    assert picked(run(p, facts)) == ["A"]
+    assert picked(run(p, facts)) == ["A"]  # one eligible
     assert picked(run(p, {**facts, "annual_premium": 10, "channel": "DIRECT"})) == ["B"]
-    both = run(p, {**facts, "channel": "DIRECT"})
+    both = run(p, {**facts, "channel": "DIRECT"})  # more than one eligible
     assert (both["status"], outcomes(both), picked(both), waiting(both)) == (
         "UNRESOLVED",
         {"x": "AMBIGUOUS"},
@@ -269,44 +279,69 @@ def test_case_6_choose_one_is_never_decided_by_list_order() -> None:
     )
     assert (
         picked(run(choose(("B", direct), ("A", high)), {**facts, "channel": "DIRECT"})) == []
-    )  # reversed: still nothing chosen
-    neither = run(p, {**facts, "annual_premium": 10})
+    )  # reversed: still nothing
+    neither = run(p, {**facts, "annual_premium": 10})  # none eligible, no fallback
     assert (neither["status"], outcomes(neither)) == ("UNRESOLVED", {"x": "NO_ALTERNATIVE"})
-    assert picked(run(choose(("A", high), ("B", None)), {**facts, "annual_premium": 10})) == [
+    assert picked(run(choose(("A", high), ("B", "FALLBACK")), {**facts, "annual_premium": 10})) == [
         "B"
-    ]  # an explicit "otherwise"
-    unknown = run(p, {**ILP_YES, "annual_premium": 60000})  # the channel is not given: B might be eligible too
+    ]  # an explicit fallback
+    unknown = run(p, {**ILP_YES, "annual_premium": 60000})  # an unknown criterion: B might be eligible too
     assert (unknown["status"], outcomes(unknown), [n["variable"] for n in unknown["needs"]]) == (
         "UNRESOLVED",
         {"x": "CHOICE_UNRESOLVED"},
         ["channel"],
     )
     assert {d["code"] for d in A.analyse_policy(ws(), p)} >= {"CAN_BE_AMBIGUOUS", "CAN_BE_NO_ALTERNATIVE"}
+    # AP-8: an alternative with no criterion is NOT a fallback. It is incomplete, and nothing is ever chosen through it
+    bare = choose(("A", high), ("B", None))
+    assert outcomes(run(bare, {**facts, "annual_premium": 10})) == {"x": "NO_ALTERNATIVE"}
+    assert [d["code"] for d in A.analyse_policy(ws(), bare) if d["severity"] == "BLOCKER"] == ["MISSING_CRITERION"]
+    assert "SEVERAL_FALLBACKS" in [
+        d["code"] for d in A.analyse_policy(ws(), choose(("A", "FALLBACK"), ("B", "FALLBACK")))
+    ]
 
 
-def test_case_7_the_same_survey_twice_means_only_what_the_policy_states() -> None:
-    reqs = (req("a", ILP, "A", name="ILP needs A"), req("b", NFTF, "A", name="NFTF needs A"))
-    both = {**ILP_YES, "nftf": True}
-    once = run(policy(*reqs, same="ONE_DELIVERY"), both)
+def test_case_7_the_same_survey_twice_is_resolved_per_collision_never_silently() -> None:
+    hp = {"op": "ref", "condition": "high_premium", "version": 2}
+    reqs = (
+        req("a", ILP, "A", name="ILP needs A"),
+        req("b", NFTF, "A", name="NFTF needs A"),
+        req("h", hp, "A", name="High premium needs A"),
+    )
+    both = {**ILP_YES, "nftf": True, "annual_premium": 10}
+    # AP-2: nothing said → unresolved, naming exactly the requirements that collide; both stay on the record
+    silent = run(policy(*reqs), both)
+    assert silent["status"] == "UNRESOLVED"
+    assert [(d["code"], d["requirements"]) for d in silent["diagnostics"]] == [("DUPLICATE_SURVEY", ["a", "b"])]
+    assert silent["selected"][0]["required_by"] == ["a", "b"] and silent["selected"][0]["conflict"] is True
+    # the author resolves THIS collision: one delivery satisfies a and b
+    stated = policy(*reqs, shared=(("A", ("a", "b")),))
+    once = run(stated, both)
     assert (once["status"], picked(once), once["selected"][0]["required_by"], once["selected"][0]["obligations"]) == (
         "RESOLVED",
         ["A"],
         ["a", "b"],
         2,
     )
-    assert [d["code"] for d in once["diagnostics"]] == ["SURVEY_REQUIRED_BY_SEVERAL"]
-    conflict = run(policy(*reqs, same="CONFLICT"), both)
-    assert (conflict["status"], [d["code"] for d in conflict["diagnostics"]]) == (
+    assert [d["code"] for d in once["diagnostics"]] == ["SURVEY_SHARED_DELIVERY"]
+    # …and that statement does not silently cover a different collision of the same survey
+    three = run(stated, {**both, "annual_premium": 90000})
+    assert (three["status"], [(d["code"], d["requirements"]) for d in three["diagnostics"]]) == (
         "UNRESOLVED",
-        ["SAME_SURVEY_CONFLICT"],
+        [("DUPLICATE_SURVEY", ["a", "b", "h"])],
     )
-    silent = run(policy(*reqs, same=None), both)  # no stated meaning: never deduplicated quietly
-    assert (silent["status"], [d["code"] for d in silent["diagnostics"]]) == (
-        "UNRESOLVED",
-        ["SAME_SURVEY_MODE_MISSING"],
-    )
-    assert "SAME_SURVEY_MODE_MISSING" in [d["code"] for d in A.analyse_policy(ws(), policy(*reqs, same=None))]
-    assert "CAN_CONFLICT" in [d["code"] for d in A.analyse_policy(ws(), policy(*reqs, same="CONFLICT"))]
+    # validation finds an unresolved collision before any scenario is run, with an example
+    found = [d for d in A.analyse_policy(ws(), policy(*reqs[:2])) if d["code"] == "DUPLICATE_SURVEY"]
+    assert len(found) == 1 and found[0]["severity"] == "BLOCKER" and "For example when" in found[0]["message"]
+    assert not [
+        d for d in A.analyse_policy(ws(), policy(*reqs[:2], shared=(("A", ("a", "b")),))) if d["severity"] == "BLOCKER"
+    ]
+    # requirements that can never apply together do not collide
+    apart = policy(req("a", ILP, "A"), req("n", {"op": "not", "arg": ILP}, "A"))
+    assert not [d for d in A.analyse_policy(ws(), apart) if d["code"] == "DUPLICATE_SURVEY"]
+    # a shared delivery must be about requirements that ask for that survey
+    wrong = policy(req("a", ILP, "A"), req("b", NFTF, "B"), shared=(("A", ("a", "b")),))
+    assert "SHARED_DELIVERY_MISMATCH" in [d["code"] for d in A.analyse_policy(ws(), wrong)]
     # different versions of one survey are always an error
     v = policy(req("a", ILP, "A"), {**req("b", NFTF), "action": {"kind": "INCLUDE", "surveys": [S("A", 2)]}})
     assert "SURVEY_VERSION_CONFLICT" in [d["code"] for d in A.analyse_policy(ws(), v)]
@@ -427,8 +462,21 @@ def test_profiles_compose_and_incompatible_ones_are_reported_not_merged() -> Non
         if d["code"] == "PROFILE_CONFLICT"
     ]
     assert len(clash) == 1 and "no application fits both" in clash[0]["message"]
-    outside = A.analyse_policy(ws(), policy(req("b", NFTF, "B"), profiles=["common"]))
-    assert [d["code"] for d in outside if d["severity"] == "WARNING"] == ["VARIABLE_OUTSIDE_PROFILES"]
+    outside = policy(req("b", NFTF, "B"), profiles=["common"])
+    assert [d["code"] for d in A.analyse_policy(ws(), outside) if d["severity"] == "WARNING"] == [
+        "VARIABLE_OUTSIDE_PROFILES"
+    ]
+    # a policy's profiles never decide whether it applies: only its explicit scope does. The fact is still read
+    assert picked(run(outside, {"nftf": True})) == ["B"]
+    # the profiles an APPLICATION states are used to check its own facts
+    stated = run(outside, {"nftf": True}, ["common"])
+    assert (picked(stated), stated["facts"]["nftf"]["state"], stated["facts"]["nftf"]["outside_profiles"]) == (
+        ["B"],
+        "KNOWN",
+        True,
+    )
+    # …where a profile narrows a value, a value outside it is invalid
+    assert Evaluation(ws(), {"product_family": "PROTECTION"}, ["ilp_ext"]).fact("product_family")["state"] == "INVALID"
 
 
 def test_analysis_claims_only_what_it_enumerated() -> None:

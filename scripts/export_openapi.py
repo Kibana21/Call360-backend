@@ -38,6 +38,8 @@ def render() -> str:
         survey_module_authoring_enabled=True,  # LIB-2: likewise
         shared_rule_services_enabled=True,  # SHARED-1: likewise
         survey_applicability_prototype_enabled=True,  # APPL-X1: the stateless prototype operations
+        applicability_library_enabled=True,  # APPL-X2: the governed applicability library
+        applicability_policies_enabled=True,  # APPL-X3: persistent applicability policies (drafts)
     )
     spec = create_app(fixed, with_database=False).openapi()
     return json.dumps(spec, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

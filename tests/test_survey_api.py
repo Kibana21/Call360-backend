@@ -438,7 +438,10 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 4 of standalone modules (LIB-2): create, list, read, and the one-module test
     # … and 4 stateless operations of the applicability prototype (APPL-X1)
     assert len([o for o in ops if is_survey_path(o[1])]) == 80
-    assert len(ops) == 199 + 80  # the 199 operations of the accepted contract, and these
+    # … and, outside the survey paths, the 14 operations of the governed applicability library (APPL-X2)
+    # … and the 10 of saved applicability policies (APPL-X3), under the same prefix
+    assert len([o for o in ops if o[1].startswith("/api/v1/applicability/")]) == 14 + 10
+    assert len(ops) == 199 + 80 + 14 + 10  # the 199 operations of the accepted contract, and these
     assert not [p for p in spec["paths"] if p == "/api/v1/surveys" or p.startswith("/api/v1/surveys/")]
     # purely additive: a name collision would make the generator rename an EXISTING schema with a module prefix
     schemas = spec["components"]["schemas"]
@@ -455,5 +458,9 @@ def test_the_published_contract_gains_the_seventeen_operations_and_loses_nothing
     # … and 1 of UX-HOME-1
     # … and 9 of LIB-2 (eight of the module operations, and where a library component was written)
     # … and 6 of APPL-X1 (five request bodies and one response of the stateless applicability prototype)
-    assert len(survey_schemas) == 122 and len(schemas) == 405 + 122
-    assert MIGRATION_HEAD == "0037_shared_rule_services"
+    # … and, under their own name, those of the applicability library (APPL-X2):
+    # … 21 of APPL-X2 and 1 for the reviewed pins a submitter acknowledges (owner ruling A4)
+    # … and 15 of saved applicability policies (APPL-X3)
+    assert len([k for k in schemas if k.startswith("Applicability")]) == 22 + 15
+    assert len(survey_schemas) == 122 and len(schemas) == 405 + 122 + 22 + 15
+    assert MIGRATION_HEAD == "0039_applicability_policy"

@@ -154,6 +154,19 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
     ),
     # EVAL-2B execution-assurance results of simulated journeys: additive
     "0035_survey_execution_assurance": ("survey_execution_assurance", "survey_execution_assurance_survey"),
+    # APPL-X2: the governed applicability library (variables, profiles, reusable conditions)
+    "0038_applicability_library": (
+        "applicability_asset",
+        "applicability_asset_version",
+        "applicability_asset_dependency",
+        "applicability_event",
+    ),  # fmt: skip
+    # APPL-X3: saved applicability policies (working drafts) with their dependency rows and history
+    "0039_applicability_policy": (
+        "applicability_policy",
+        "applicability_policy_dependency",
+        "applicability_policy_event",
+    ),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 

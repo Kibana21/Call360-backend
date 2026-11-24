@@ -107,3 +107,13 @@ def login(client: TestClient, account: Account, password: str | None = None) -> 
 
 def csrf_header(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": client.cookies.get("c360_csrf") or ""}
+
+
+#: APPL-X2 (0038) and APPL-X3 (0039): the applicability tables. A downgrade below 0038 removes them all.
+APPLICABILITY_TABLES = frozenset(
+    {
+        "applicability_asset", "applicability_asset_version", "applicability_asset_dependency", "applicability_event",
+        # APPL-X3 (migration 0039): saved applicability policies
+        "applicability_policy", "applicability_policy_dependency", "applicability_policy_event",
+    }
+)  # fmt: skip

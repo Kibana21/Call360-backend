@@ -1,0 +1,603 @@
+{
+ "note": "SYNTHETIC. The showcase applicability library: illustrative variables, profiles and conditions. ILP, NFTF, replacement and riders are NOT approved business definitions and no source mapping is invented. Exported from Call360-frontend/src/features/applicability/model/seed.ts; published through the governed API by scripts/appl_library_setup.py.",
+ "variables": [
+  {
+   "code": "market",
+   "document": {
+    "name": "Market",
+    "description": "The market the application belongs to.",
+    "category": "Application",
+    "type": "ENUM",
+    "values": [
+     {
+      "value": "SG",
+      "label": "Singapore"
+     }
+    ],
+    "source": {
+     "status": "MAPPED",
+     "system": "Policy fact snapshot",
+     "field": "facts.market"
+    },
+    "owner": "Standards & Compliance",
+    "samples": [
+     "SG"
+    ]
+   }
+  },
+  {
+   "code": "product_family",
+   "document": {
+    "name": "Product family",
+    "description": "The broad kind of product that was sold.",
+    "category": "Product",
+    "type": "ENUM",
+    "values": [
+     {
+      "value": "ILP",
+      "label": "Investment-linked"
+     },
+     {
+      "value": "PROTECTION",
+      "label": "Protection"
+     },
+     {
+      "value": "ENDOWMENT",
+      "label": "Endowment"
+     }
+    ],
+    "source": {
+     "status": "MAPPED",
+     "system": "Policy fact snapshot",
+     "field": "facts.product_family"
+    },
+    "owner": "Product",
+    "samples": [
+     "ILP",
+     "PROTECTION"
+    ]
+   }
+  },
+  {
+   "code": "is_ilp",
+   "document": {
+    "name": "Is ILP",
+    "description": "Yes when the product family is investment-linked. Worked out from Product family; nobody enters it.",
+    "category": "Product",
+    "type": "BOOLEAN",
+    "source": {
+     "status": "DERIVED",
+     "note": "Derived from Product family"
+    },
+    "derived": {
+     "expr": {
+      "op": "test",
+      "variable": "product_family",
+      "operator": "equals",
+      "value": "ILP"
+     }
+    },
+    "samples": [
+     true
+    ]
+   }
+  },
+  {
+   "code": "selected_riders",
+   "document": {
+    "name": "Selected riders",
+    "description": "Riders added to the base plan.",
+    "category": "Product",
+    "type": "MULTI_ENUM",
+    "values": [
+     {
+      "value": "CI",
+      "label": "Critical illness"
+     },
+     {
+      "value": "WOP",
+      "label": "Waiver of premium"
+     },
+     {
+      "value": "HOSP",
+      "label": "Hospital cash"
+     }
+    ],
+    "source": {
+     "status": "UNMAPPED",
+     "note": "No rider data exists in Call360 today."
+    },
+    "samples": [
+     [
+      "CI"
+     ]
+    ]
+   }
+  },
+  {
+   "code": "sales_channel",
+   "document": {
+    "name": "Sales channel",
+    "description": "How the sale was made.",
+    "category": "Sale",
+    "type": "ENUM",
+    "values": [
+     {
+      "value": "AGENCY",
+      "label": "Agency"
+     },
+     {
+      "value": "BANCASSURANCE",
+      "label": "Bancassurance"
+     },
+     {
+      "value": "BROKER",
+      "label": "Broker"
+     },
+     {
+      "value": "DIRECT",
+      "label": "Direct"
+     }
+    ],
+    "source": {
+     "status": "MAPPED",
+     "system": "Policy fact snapshot",
+     "field": "facts.selling_channel"
+    },
+    "owner": "Distribution",
+    "samples": [
+     "AGENCY"
+    ]
+   }
+  },
+  {
+   "code": "nftf",
+   "document": {
+    "name": "NFTF applies",
+    "description": "Illustrative. What NFTF means, and where it comes from, has not been defined or approved.",
+    "category": "Sale",
+    "type": "BOOLEAN",
+    "source": {
+     "status": "UNMAPPED",
+     "note": "No definition and no source yet."
+    },
+    "samples": [
+     true,
+     false
+    ]
+   }
+  },
+  {
+   "code": "replacement",
+   "document": {
+    "name": "Replacement applies",
+    "description": "The sale replaces an existing policy.",
+    "category": "Sale",
+    "type": "BOOLEAN",
+    "source": {
+     "status": "PROPOSED",
+     "system": "Sale event",
+     "field": "sale_event_type = REPLACEMENT",
+     "note": "The sale type exists; the mapping is not approved and the replaced policy is not recorded."
+    },
+    "samples": [
+     false
+    ]
+   }
+  },
+  {
+   "code": "premium_frequency",
+   "document": {
+    "name": "Premium frequency",
+    "description": "How often the premium is paid.",
+    "category": "Premium",
+    "type": "ENUM",
+    "values": [
+     {
+      "value": "SINGLE",
+      "label": "Single"
+     },
+     {
+      "value": "MONTHLY",
+      "label": "Monthly"
+     },
+     {
+      "value": "ANNUAL",
+      "label": "Annual"
+     }
+    ],
+    "source": {
+     "status": "MAPPED",
+     "system": "Policy fact snapshot",
+     "field": "facts.premium_frequency"
+    },
+    "samples": [
+     "ANNUAL"
+    ]
+   }
+  },
+  {
+   "code": "annual_premium",
+   "document": {
+    "name": "Annual premium",
+    "description": "The premium for one year.",
+    "category": "Premium",
+    "type": "MONEY",
+    "currency": "SGD",
+    "min": 0,
+    "source": {
+     "status": "PROPOSED",
+     "system": "Policy fact snapshot",
+     "field": "premium_amount × frequency",
+     "note": "What \"annual\" means for a single premium is not defined."
+    },
+    "samples": [
+     12000,
+     60000
+    ]
+   }
+  },
+  {
+   "code": "risk_class",
+   "document": {
+    "name": "Risk classification",
+    "description": "The SBQ sale-selection risk band. Not investment risk tolerance.",
+    "category": "Risk",
+    "type": "ENUM",
+    "values": [
+     {
+      "value": "LOW",
+      "label": "Low"
+     },
+     {
+      "value": "MEDIUM",
+      "label": "Medium"
+     },
+     {
+      "value": "HIGH",
+      "label": "High"
+     }
+    ],
+    "source": {
+     "status": "MAPPED",
+     "system": "SBQ risk assessment",
+     "field": "band_code"
+    },
+    "owner": "Standards & Compliance",
+    "samples": [
+     "LOW"
+    ]
+   }
+  },
+  {
+   "code": "customer_age",
+   "document": {
+    "name": "Customer age",
+    "description": "Age in years.",
+    "category": "Customer",
+    "type": "NUMBER",
+    "min": 0,
+    "max": 120,
+    "source": {
+     "status": "UNMAPPED",
+     "note": "Only a year of birth is held; whose age, and at which date, is not defined."
+    },
+    "samples": [
+     42
+    ]
+   }
+  },
+  {
+   "code": "commencement_date",
+   "document": {
+    "name": "Policy commencement date",
+    "description": "The day cover starts.",
+    "category": "Product",
+    "type": "DATE",
+    "source": {
+     "status": "PROPOSED",
+     "system": "Policy",
+     "field": "effective_from",
+     "note": "On the policy, not in the fact snapshot."
+    },
+    "samples": [
+     "2026-07-01"
+    ]
+   }
+  }
+ ],
+ "profiles": [
+  {
+   "code": "common",
+   "document": {
+    "required": [
+     "market",
+     "product_family"
+    ],
+    "extends": [],
+    "name": "Common insurance application",
+    "description": "What every application carries.",
+    "sections": [
+     {
+      "name": "Application",
+      "variables": [
+       "market",
+       "sales_channel"
+      ]
+     },
+     {
+      "name": "Product and premium",
+      "variables": [
+       "product_family",
+       "premium_frequency",
+       "annual_premium",
+       "commencement_date"
+      ]
+     },
+     {
+      "name": "Risk and customer",
+      "variables": [
+       "risk_class",
+       "customer_age"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "code": "ilp_extension",
+   "document": {
+    "required": [],
+    "extends": [
+     "common"
+    ],
+    "name": "ILP extension",
+    "description": "Added for investment-linked products.",
+    "sections": [
+     {
+      "name": "Investment-linked",
+      "variables": [
+       "is_ilp"
+      ]
+     }
+    ],
+    "constraints": {
+     "product_family": {
+      "allowed": [
+       "ILP"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "code": "protection_extension",
+   "document": {
+    "required": [],
+    "extends": [
+     "common"
+    ],
+    "name": "Protection extension",
+    "description": "Added for protection products.",
+    "sections": [],
+    "constraints": {
+     "product_family": {
+      "allowed": [
+       "PROTECTION"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "code": "nftf_extension",
+   "document": {
+    "required": [],
+    "extends": [],
+    "name": "NFTF extension",
+    "description": "Illustrative: facts about a non-face-to-face sale, once defined.",
+    "sections": [
+     {
+      "name": "Non-face-to-face",
+      "variables": [
+       "nftf"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "code": "replacement_extension",
+   "document": {
+    "required": [],
+    "extends": [],
+    "name": "Replacement extension",
+    "description": "Added when a policy may be replaced.",
+    "sections": [
+     {
+      "name": "Replacement",
+      "variables": [
+       "replacement"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "code": "rider_extension",
+   "document": {
+    "required": [],
+    "extends": [],
+    "name": "Rider extension",
+    "description": "Added when riders can be selected.",
+    "sections": [
+     {
+      "name": "Riders",
+      "variables": [
+       "selected_riders"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "code": "new_business",
+   "document": {
+    "required": [],
+    "extends": [
+     "common",
+     "nftf_extension",
+     "replacement_extension",
+     "rider_extension"
+    ],
+    "name": "New business application",
+    "description": "The usual combination: common facts, the ILP flag, NFTF, replacement and riders. It does not narrow the product family.",
+    "sections": [
+     {
+      "name": "Investment-linked",
+      "variables": [
+       "is_ilp"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "conditions": [
+  {
+   "code": "is_ilp",
+   "versions": [
+    {
+     "name": "Is ILP",
+     "description": "The product is investment-linked.",
+     "expr": {
+      "op": "test",
+      "variable": "is_ilp",
+      "operator": "is_true"
+     }
+    }
+   ]
+  },
+  {
+   "code": "nftf_applies",
+   "versions": [
+    {
+     "name": "NFTF applies",
+     "description": "Illustrative.",
+     "expr": {
+      "op": "test",
+      "variable": "nftf",
+      "operator": "is_true"
+     }
+    }
+   ]
+  },
+  {
+   "code": "ilp_with_nftf",
+   "versions": [
+    {
+     "name": "ILP with NFTF",
+     "description": "Both at once.",
+     "expr": {
+      "op": "all",
+      "args": [
+       {
+        "op": "ref",
+        "condition": "is_ilp",
+        "version": 1
+       },
+       {
+        "op": "ref",
+        "condition": "nftf_applies",
+        "version": 1
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "code": "ilp_without_nftf",
+   "versions": [
+    {
+     "name": "ILP without NFTF",
+     "description": "ILP, and NFTF does not apply.",
+     "expr": {
+      "op": "all",
+      "args": [
+       {
+        "op": "ref",
+        "condition": "is_ilp",
+        "version": 1
+       },
+       {
+        "op": "not",
+        "arg": {
+         "op": "ref",
+         "condition": "nftf_applies",
+         "version": 1
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "code": "replacement_applies",
+   "versions": [
+    {
+     "name": "Replacement applies",
+     "description": "The sale replaces an existing policy.",
+     "expr": {
+      "op": "test",
+      "variable": "replacement",
+      "operator": "is_true"
+     }
+    }
+   ]
+  },
+  {
+   "code": "high_premium",
+   "versions": [
+    {
+     "name": "High premium",
+     "description": "Synthetic threshold, not an approved one.",
+     "expr": {
+      "op": "test",
+      "variable": "annual_premium",
+      "operator": "gte",
+      "value": 20000
+     }
+    },
+    {
+     "name": "High premium",
+     "description": "Synthetic threshold, not an approved one.",
+     "expr": {
+      "op": "test",
+      "variable": "annual_premium",
+      "operator": "gte",
+      "value": 50000
+     }
+    }
+   ]
+  },
+  {
+   "code": "rider_includes_ci",
+   "versions": [
+    {
+     "name": "Selected rider includes CI",
+     "description": "A critical illness rider was chosen.",
+     "expr": {
+      "op": "test",
+      "variable": "selected_riders",
+      "operator": "includes_any",
+      "values": [
+       "CI"
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

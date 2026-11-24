@@ -14,6 +14,8 @@ from app.api import (
     admin,
     admin_access,
     admin_config,
+    applicability_library,
+    applicability_policies,
     assignment_rules,
     auth,
     case_detail,
@@ -98,8 +100,8 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0037_shared_rule_services"
-#: Each of the last eleven revisions only ADDS objects that are used when its own setting is on. A schema behind the
+MIGRATION_HEAD = "0039_applicability_policy"
+#: Each of the last thirteen revisions only ADDS objects that are used when its own setting is on. A schema behind the
 #: head therefore serves everything that is switched on correctly, and is accepted in exactly that case:
 #:   0027 (SS-03A, survey definitions)        — needed when `survey_definitions_enabled` is on;
 #:   0028 (LIB-1, server-issued codes)        — needed when `survey_library_enabled` is on;
@@ -112,8 +114,12 @@ MIGRATION_HEAD = "0037_shared_rule_services"
 #:   0035 (EVAL-2B, execution assurance)      — needed when `survey_execution_assurance_enabled` is on.
 #:   0036 (LIB-2, standalone modules)         — needed when `survey_module_authoring_enabled` is on.
 #:   0037 (SHARED-1, rules on their own)      — needed when `shared_rule_services_enabled` is on.
+#:   0038 (APPL-X2, applicability library)   — needed when `applicability_library_enabled` is on.
+#:   0039 (APPL-X3, applicability policies)  — needed when `applicability_policies_enabled` (with the library) is on.
 #: With a setting on, the schema must hold that setting's revision, or readiness fails closed.
 OPTIONAL_REVISIONS = (
+    "0039_applicability_policy",
+    "0038_applicability_library",
     "0037_shared_rule_services",
     "0036_survey_module_authoring",
     "0035_survey_execution_assurance", "0034_survey_control_policy", "0033_survey_control_evaluation",
@@ -170,21 +176,28 @@ def survey_module_authoring_on(settings: Settings) -> bool:
     return survey_library_on(settings) and settings.survey_module_authoring_enabled
 
 
+def applicability_policies_on(settings: Settings) -> bool:
+    """A policy reads the governed library: policies are on only when the library is."""
+    return settings.applicability_library_enabled and settings.applicability_policies_enabled
+
+
 def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
     """The head, and every earlier revision down to the newest one that something switched on needs."""
     needed = (
-        0 if settings.shared_rule_services_enabled
-        else 1 if survey_module_authoring_on(settings)
-        else 2 if survey_execution_assurance_on(settings)
-        else 3 if survey_control_policy_on(settings)
-        else 4 if survey_evaluation_on(settings)
-        else 5 if survey_coordinated_simulation_on(settings)
-        else 6 if survey_assignment_groups_on(settings)
-        else 7 if survey_assignment_on(settings)
-        else 8 if survey_simulation_on(settings)
-        else 9 if survey_library_on(settings)
-        else 10 if settings.survey_definitions_enabled
-        else 11
+        0 if applicability_policies_on(settings)
+        else 1 if settings.applicability_library_enabled
+        else 2 if settings.shared_rule_services_enabled
+        else 3 if survey_module_authoring_on(settings)
+        else 4 if survey_execution_assurance_on(settings)
+        else 5 if survey_control_policy_on(settings)
+        else 6 if survey_evaluation_on(settings)
+        else 7 if survey_coordinated_simulation_on(settings)
+        else 8 if survey_assignment_groups_on(settings)
+        else 9 if survey_assignment_on(settings)
+        else 10 if survey_simulation_on(settings)
+        else 11 if survey_library_on(settings)
+        else 12 if settings.survey_definitions_enabled
+        else 13
     )  # fmt: skip
     return OPTIONAL_REVISIONS[: needed + 1]
 
@@ -295,6 +308,13 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
         if settings.survey_applicability_prototype_enabled:
             # APPL-X1: off by default. A stateless PROTOTYPE of the applicability evaluator: no table, no write.
             app.include_router(survey_applicability.router)
+    if settings.applicability_library_enabled:
+        # APPL-X2: off by default; needs 0038. The governed library of variables, profiles and reusable conditions.
+        # A domain of its own: independent of the survey and script permissions, and of every assignment table.
+        app.include_router(applicability_library.router)
+    if applicability_policies_on(settings):
+        # APPL-X3: off by default; needs 0039. Saved policy DRAFTS and their dependency snapshots. No publication.
+        app.include_router(applicability_policies.router)
     return app
 
 

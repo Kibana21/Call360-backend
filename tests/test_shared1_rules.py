@@ -652,7 +652,7 @@ def test_zz_migration_0037_backfills_and_preserves_every_rule_and_fails_safely(
         publish_rule(
             maker, checker, "Z-SCRIPT", [SG, {"field": "selling_channel", "values": ["DIRECT"]}], 5
         )  # a populated schema
-        assert head() == MIGRATION_HEAD == "0037_shared_rule_services"
+        assert head() == MIGRATION_HEAD
         full_rules, full_others = rule_rows(engine), others()
         assert {"market_code", "target_kind"} <= columns()
 
@@ -698,7 +698,11 @@ def test_zz_migration_0037_backfills_and_preserves_every_rule_and_fails_safely(
         kept = rule_rows(engine)
         with pytest.raises(RuntimeError, match="survey-only assignment rules exist"):
             migrate(settings, "0036_survey_module_authoring", down=True)
-        assert head() == MIGRATION_HEAD and rule_rows(engine) == kept and {"market_code", "target_kind"} <= columns()
+        # 0038 (an empty applicability library) rolled back first; 0037 then refused and kept every rule
+        assert head() == "0037_shared_rule_services" and rule_rows(engine) == kept
+        assert {"market_code", "target_kind"} <= columns()
+        migrate(settings, "head")
+        assert head() == MIGRATION_HEAD and rule_rows(engine) == kept
     finally:
         maker.__exit__(None, None, None)
         checker.__exit__(None, None, None)

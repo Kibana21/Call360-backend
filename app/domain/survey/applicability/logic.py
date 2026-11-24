@@ -192,7 +192,7 @@ class Evaluation:
         self.nodes = 0
 
     def fact(self, code: str) -> dict[str, Any]:
-        """The state of one variable for this application: KNOWN, UNKNOWN, NOT_PROVIDED, INVALID or UNSUPPORTED."""
+        """The state of one variable for this application: KNOWN, UNKNOWN, NOT_PROVIDED or INVALID."""
         if code in self._states:
             return self._states[code]
         var = self.ws.variables.get(code)
@@ -211,8 +211,6 @@ class Evaluation:
             else:
                 out = {"state": "KNOWN", "value": node["result"] == TRUE, "reason": "derived"}
             out["derived"] = True
-        elif self.supported is not None and code not in self.supported:
-            out = {"state": "UNSUPPORTED", "value": None, "reason": "it is not part of this application's profiles"}
         elif code not in self.facts:
             out = {"state": "NOT_PROVIDED", "value": None, "reason": "no value was given"}
         elif self.facts[code] is None:
@@ -232,6 +230,10 @@ class Evaluation:
                 out = {"state": "KNOWN", "value": value, "reason": ""}
             else:
                 out = {"state": "INVALID", "value": None, "given": raw, "reason": why}
+        # A profile organises the facts of an application; it never makes a fact that was given disappear, and it never
+        # decides whether a policy applies. A fact from outside the stated profiles is read and merely marked.
+        if self.supported is not None and code not in self.supported and not derived:
+            out["outside_profiles"] = True
         out["variable"] = code
         out["name"] = var.get("name") or code
         out["label"] = (

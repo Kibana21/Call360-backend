@@ -424,16 +424,20 @@ def analyse_policy(ws: Workspace, policy: dict[str, Any]) -> list[dict[str, Any]
     name = {i: str(r.get("name") or i) for i, r in by_id.items()}
     if not reqs:
         out.append(_d("WARNING", "NO_REQUIREMENT", "This policy has no requirement yet: it selects nothing", **pol))
-    if policy.get("same_survey") not in ev_.SAME_SURVEY:
-        out.append(
-            _d(
-                "BLOCKER",
-                "SAME_SURVEY_MODE_MISSING",
-                "Say what it means when two requirements ask for the same survey",
-                **pol,
-                field="same_survey",
+    for n, d in enumerate(policy.get("shared_deliveries") or []):
+        members = [str(x) for x in d.get("requirements") or []]
+        at = {**pol, "field": "shared_deliveries", "index": n, "survey": d.get("survey")}
+        if len(members) < 2:
+            out.append(
+                _d("BLOCKER", "SHARED_DELIVERY_TOO_FEW", "A shared delivery names at least two requirements", **at)
             )
-        )
+        for m in members:
+            if m not in by_id:
+                text = "A shared delivery names a requirement that does not exist"
+                out.append(_d("BLOCKER", "SHARED_DELIVERY_UNKNOWN", text, **at))
+            elif str(d.get("survey")) not in {ev_.survey_key(x) for x in ev_.surveys_of(by_id[m])}:
+                text = f"‘{name[m]}’ does not ask for the survey this shared delivery is about"
+                out.append(_d("BLOCKER", "SHARED_DELIVERY_MISMATCH", text, **at))
     profiles = [str(p) for p in policy.get("profiles") or []]
     supported: set[str] | None = None
     try:
@@ -487,28 +491,29 @@ def analyse_policy(ws: Workspace, policy: dict[str, Any]) -> list[dict[str, Any]
                         part="action",
                     )
                 )
-            if sum(1 for a in alts if not a.get("when")) > 1:
-                out.append(
-                    _d(
-                        "BLOCKER",
-                        "SEVERAL_OTHERWISE",
-                        f"‘{name[rid]}’ has more than one 'otherwise' alternative",
-                        **where,
-                        part="action",
-                    )
-                )
+            for i, a in enumerate(alts):
+                what = (a.get("survey") or {}).get("name") or "this alternative"
+                if a.get("fallback") and a.get("when"):
+                    text = f"‘{name[rid]}’: a fallback has no criterion of its own"
+                    out.append(_d("BLOCKER", "FALLBACK_WITH_CRITERION", text, **where, part=f"alternative {i + 1}"))
+                elif not a.get("fallback") and not a.get("when"):
+                    text = f"‘{name[rid]}’: say when {what} is the one to use, or mark it as the fallback"
+                    out.append(_d("BLOCKER", "MISSING_CRITERION", text, **where, part=f"alternative {i + 1}"))
+            if sum(1 for a in alts if a.get("fallback")) > 1:
+                text = f"‘{name[rid]}’ has more than one fallback"
+                out.append(_d("BLOCKER", "SEVERAL_FALLBACKS", text, **where, part="action"))
             for i, a in enumerate(alts):
                 if a.get("when"):
                     check_expr(ws, a["when"], {**where, "part": f"alternative {i + 1}"}, out)
         seen_here: set[str] = set()
         for ref in refs:
             key = ev_.survey_key(ref)
-            if not ref.get("code") or ref.get("version") in (None, ""):
+            if not ref.get("code") or not ref.get("version"):
                 out.append(
                     _d(
                         "BLOCKER",
                         "SURVEY_NOT_PINNED",
-                        f"‘{name[rid]}’: a survey has no exact published version",
+                        f"‘{name[rid]}’: {ref.get('name') or ref.get('code') or 'a survey'} is not pinned to a version published in Survey Studio",  # noqa: E501
                         **where,
                         part="action",
                     )
@@ -588,21 +593,22 @@ def analyse_policy(ws: Workspace, policy: dict[str, Any]) -> list[dict[str, Any]
     cyc = _cycle(graph)
     if cyc:
         loop = " → ".join(f"‘{name[x]}’" for x in cyc)
-        out.append(
-            _d(
-                "BLOCKER",
-                "REPLACEMENT_CYCLE",
-                f"These requirements replace each other in a circle: {loop}",
-                **pol,
-                requirements=cyc,
+        # said on every requirement of the circle, where the author will look
+        for rid in dict.fromkeys(cyc):
+            text = f"These requirements replace each other in a circle: {loop}. Remove one of the replacements"
+            out.append(
+                _d("BLOCKER", "REPLACEMENT_CYCLE", text, kind="requirement", id=rid, part="replaces", requirements=cyc)
             )
-        )
     else:
         for rid, targets in graph.items():
             for t in targets:
                 if graph.get(t):
-                    text = f"‘{name[rid]}’ replaces ‘{name[t]}’, which itself replaces {', '.join('‘' + name[x] + '’' for x in graph[t])}. When all apply, those come back."  # noqa: E501
-                    out.append(_d("WARNING", "REPLACEMENT_CHAIN", text, kind="requirement", id=rid, part="replaces"))
+                    again = ", ".join(f"‘{name[x]}’" for x in graph[t])
+                    text = (
+                        f"‘{name[rid]}’ replaces ‘{name[t]}’, which itself replaces {again}. Chains are not allowed: "
+                        f"name everything ‘{name[rid]}’ should replace on ‘{name[rid]}’ itself"
+                    )
+                    out.append(_d("BLOCKER", "REPLACEMENT_CHAIN", text, kind="requirement", id=rid, part="replaces"))
     if any(x["severity"] == "BLOCKER" for x in out):
         return out
     out.extend(_behaviour(ws, policy, by_id, name))
@@ -693,15 +699,17 @@ def _behaviour(
                     )
                 )
         for d in plan["diagnostics"]:
-            if d["code"] == "SAME_SURVEY_CONFLICT" and ("same", d["survey"]) not in told:
-                told.add(("same", d["survey"]))
+            key = ("same", f"{d.get('survey')}:{','.join(d.get('requirements') or [])}")
+            if d["code"] == "DUPLICATE_SURVEY" and key not in told:
+                told.add(key)
                 out.append(
                     _d(
-                        "WARNING",
-                        "CAN_CONFLICT",
+                        "BLOCKER",
+                        "DUPLICATE_SURVEY",
                         f"{d['message']} For example when {facts_text(ws, facts)}",
                         **pol,
                         survey=d["survey"],
+                        requirements=d.get("requirements"),
                         example=facts,
                     )
                 )

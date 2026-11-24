@@ -27,7 +27,7 @@ from app.domain.survey import control_evaluation as ce
 from app.domain.survey import simulation
 from app.domain.survey.execution import execute_inputs
 from app.main import create_app
-from tests.support import make_account
+from tests.support import APPLICABILITY_TABLES, make_account
 from tests.survey_fixtures import load_all
 from tests.survey_support import fixture_bundle
 from tests.test_survey_api import GRANTS, MARKETS, _client, post, with_grants
@@ -1159,7 +1159,7 @@ def test_zz_migration_0033_goes_down_and_up_and_changes_nothing_else(
 
     full = state()
     assert set(EVALUATION_TABLES) <= full[0] and full[1:] == (
-        "0037_shared_rule_services",
+        "0039_applicability_policy",
         2,
         0,
     )  # granted to nobody
@@ -1167,6 +1167,7 @@ def test_zz_migration_0033_goes_down_and_up_and_changes_nothing_else(
     # EVAL-2A (0034) sits above 0033 and goes down with it
     assert state() == (
         full[0]
+        - APPLICABILITY_TABLES
         - set(EVALUATION_TABLES)
         - {
             "survey_control_policy",

@@ -21,13 +21,13 @@ from app.core.settings import Settings
 from app.domain.survey import store
 from app.domain.survey.canonical import sha256_hex
 from app.domain.survey.store import SurveyError
-from tests.support import Account, make_account, migrate
+from tests.support import APPLICABILITY_TABLES, Account, make_account, migrate
 from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
 HEAD, BEFORE = (
-    "0037_shared_rule_services",
+    "0039_applicability_policy",
     "0026_gpt_live_provider",
-)  # 0027 … 0036 are survey-only; 0037 adds two columns to rules
+)  # 0027 … 0036 are survey-only; 0037 adds two columns to rules; 0038 adds the applicability library
 SURVEY_TABLES = {
     "survey_definition", "survey_draft", "survey_asset_version", "survey_candidate", "survey_version",
     "survey_lifecycle_event", "survey_wording_approval", "survey_asset_usage", "survey_catalog_entry",
@@ -105,7 +105,13 @@ def test_the_migration_is_additive_and_points_at_no_script_table(db: Session) ->
         ("survey_obligation_result", "control"),  # EVAL-2A: the same two kinds of reference, for policy-scoped results
         ("survey_obligation_finding", "finding_rule_set_version"),
     }
-    assert into_survey == set()
+    # ONE stated exception in this direction (APPL-X3, owner ruling: "use database foreign keys wherever feasible"): a
+    # saved applicability policy names the exact PUBLISHED survey version it selects. A reference only: no survey table,
+    # column, trigger or row is changed, and Survey Studio does not depend on it.
+    assert into_survey == {
+        ("applicability_policy_dependency", "survey_definition"),
+        ("applicability_policy_dependency", "survey_version"),
+    }
 
 
 def test_status_is_derived_no_candidate_or_version_row_carries_one(db: Session) -> None:
@@ -662,7 +668,7 @@ def test_zz_migration_downgrades_to_the_previous_head_and_upgrades_again(
     with engine.connect() as c:  # every other table is still there, untouched by the round trip
         assert (
             set(c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'call360_test'")).scalars())
-            == others
+            == others - APPLICABILITY_TABLES  # 0038 sits above the survey revisions and goes down with them
         )
         assert (
             c.execute(
