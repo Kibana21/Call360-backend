@@ -530,6 +530,32 @@ class Evaluator:
             return {**row, "state": "COULD_NOT_EVALUATE", "reason": (self.reasons[0]["message"] if self.reasons else "The policy cannot be evaluated until its dependencies are reconciled")}  # fmt: skip
         differ = _mismatches(self.res, res)
         row["diagnostics"] += differ
+        # A variable at another version than the policy's is information ONLY while the given value is still valid under
+        # the POLICY's definition. Another type, another currency, or a value the policy's definition does not allow is
+        # a material incompatibility: reported everywhere, and never a passing publication-gating result.
+        mine = {str(v.get("code")).lower(): v for v in self.res.workspace["variables"]}
+        clash: list[dict[str, Any]] = []
+        for d in differ:
+            if d["code"] != "VARIABLE_VERSION_DIFFERS":
+                continue
+            code = str(d["at"]["code"])
+            theirs, ours, value = (
+                res.variables.get(code) or {},
+                mine.get(code.lower()) or {},
+                (doc.get("facts") or {}).get(code),
+            )
+            if value is None or ours.get("derived"):
+                continue
+            why = (
+                f"its type is {ours.get('type')} for the policy and {theirs.get('type')} for the scenario" if ours.get("type") != theirs.get("type")
+                else f"its currency is {ours.get('currency')} for the policy and {theirs.get('currency')} for the scenario" if ours.get("currency") != theirs.get("currency")
+                else _check_value(ours, value)
+            )  # fmt: skip
+            if why:
+                clash.append(_d("WARNING", "VARIABLE_VERSION_INCOMPATIBLE", f"The value given for '{ours.get('name') or code}' is not valid under the version of that fact the policy evaluates: {why}. Reconcile the scenario with the policy's version before it can count towards publication", kind="variable", code=code))  # fmt: skip
+        row["diagnostics"] += clash
+        if gating and clash:
+            return {**row, "state": "INVALID_DEFINITION", "reason": clash[0]["message"]}
         if gating and any(d["code"] == "PROFILE_VERSION_DIFFERS" for d in differ):
             return {**row, "state": "INVALID_DEFINITION", "reason": next(d["message"] for d in differ if d["code"] == "PROFILE_VERSION_DIFFERS")}  # fmt: skip
         return self.plan(row, _workspace(self.res.workspace, res), doc)

@@ -913,6 +913,57 @@ def test_what_cannot_be_evaluated_never_passes(people: dict[str, TestClient]) ->
     assert (
         no["status"] == "INVALID_DEFINITION" and no["invalid"] == 1 and "Reconcile them" in no["results"][0]["reason"]
     )
+    # ---- a VARIABLE at another version: information only while the value is still valid under the policy's definition
+    family = next(
+        x for x in p["author"].get(f"{A}/assets?kind=VARIABLE").json()["items"] if x["code"] == "product_family"
+    )
+    revise(
+        p, family["id"], {**FAMILY, "values": [*FAMILY["values"], {"value": "HEALTH", "label": "Health"}]}
+    )  # v2 allows HEALTH
+    ilp2 = saved(
+        p["author"], "ILP-ON-V2", {"product_family": "ILP", "nftf": False}, profiles=()
+    )  # pins product_family v2; ILP is valid in v1 too
+    health = saved(
+        p["author"], "HEALTH-ON-V2", {"product_family": "HEALTH", "nftf": False}, profiles=()
+    )  # valid in v2, NOT in the policy's v1
+    assert next(e for e in health["snapshot"]["dependencies"] if e["code"] == "product_family")["version_no"] == 2
+    assert health["inspection"]["diagnostics"] == []  # by its own pinned definition the scenario is perfectly valid
+    gate = suite(
+        p["author"],
+        "VAR-GATE",
+        w["policy"]["id"],
+        [(ilp2, expect("RESOLVED", a)), (health, expect("UNRESOLVED", pending=(a["code"],)))],
+    )
+    r = run(p["author"], gate["id"])
+    # compatible difference: evaluated, passes, and says so; incompatible value: NOT a pass, even though "unresolved" was expected
+    assert (
+        outcomes(r) == {"ILP-ON-V2": "PASSED", "HEALTH-ON-V2": "INVALID_DEFINITION"}
+        and r["status"] == "INVALID_DEFINITION"
+    )
+    assert (
+        "is not valid under the version of that fact the policy evaluates" in r["results"][1]["reason"]
+        and "'HEALTH' is not one of the allowed values" in r["results"][1]["reason"]
+    )
+    codes_ = [{d["code"] for d in p["reader"].get(f"{R}/{r['id']}/results/{i}").json()["diagnostics"]} for i in (1, 2)]
+    assert codes_[0] == {"VARIABLE_VERSION_DIFFERS"} and codes_[1] == {
+        "VARIABLE_VERSION_DIFFERS",
+        "VARIABLE_VERSION_INCOMPATIBLE",
+    }
+    # the same in an EXPLORATORY suite is evaluated and shown with the warning — and never counts towards publication
+    lax = run(
+        p["author"],
+        suite(
+            p["author"],
+            "VAR-LAX",
+            w["policy"]["id"],
+            [(health, expect("UNRESOLVED", pending=(a["code"],)))],
+            purpose="EXPLORATORY",
+        )["id"],
+    )
+    assert lax["status"] == "PASSED" and lax["coverage"]["meaningful_for_publication"] is False
+    assert "VARIABLE_VERSION_INCOMPATIBLE" in {
+        d["code"] for d in p["reader"].get(f"{R}/{lax['id']}/results/1").json()["diagnostics"]
+    }
     # ---- a policy whose own pinned draft has moved cannot be run: recorded as could-not-evaluate, never as passed
     cond = created(p["author"], "CONDITION", "draft_cond", {"name": "Draft condition", "expr": check("nftf")})
     pol_ = read_policy(p["author"], w["policy"]["id"])
