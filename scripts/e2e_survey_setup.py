@@ -53,6 +53,10 @@ SG = (
     ("E2E_APPL_AUTHOR", "E2E applicability author", "E2E_APPL_AUTHOR2_SG", "e2e.survey.applsecond", "E2E Second Applicability Author", ("survey.read", "applicability.read", "applicability.edit")),
     ("E2E_APPL_CHECKER", "E2E applicability checker", "E2E_APPL_CHECKER_SG", "e2e.survey.applchecker", "E2E Applicability Checker", ("survey.read", "applicability.read", "applicability.approve")),
     ("E2E_APPL_PUBLISHER", "E2E applicability publisher", "E2E_APPL_PUBLISHER_SG", "e2e.survey.applpublisher", "E2E Applicability Publisher", ("survey.read", "applicability.read", "applicability.publish")),
+    # APPL-X5a (owner-approved, TEST SCHEMA ONLY): one person who may RUN a synthetic journey over a published policy
+    # version — exactly the three existing permissions that needs, and nothing else. No existing role is widened; this
+    # identity does not exist in development. It cannot edit, approve or publish applicability, or evaluate.
+    ("E2E_APPL_JOURNEY", "E2E applicability journey runner", "E2E_APPL_JOURNEY_SG", "e2e.survey.journey", "E2E Journey Runner", ("applicability.read", "survey.read", "survey.simulate")),
 )  # fmt: skip
 #: holds read and edit, but is scoped to a market that is not enabled: sees no survey at all
 ELSEWHERE = (

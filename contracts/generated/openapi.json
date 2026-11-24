@@ -1014,6 +1014,577 @@
         "title": "ApplicabilityAssetList",
         "type": "object"
       },
+      "ApplicabilityBlocker": {
+        "properties": {
+          "action": {
+            "description": "What to do to clear it.",
+            "title": "Action",
+            "type": "string"
+          },
+          "at": {
+            "additionalProperties": true,
+            "description": "What it concerns: the requirement, the dependency, the exact versions in conflict.",
+            "title": "At",
+            "type": "object"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "prevents": {
+            "items": {
+              "enum": [
+                "SUBMISSION",
+                "APPROVAL",
+                "PUBLICATION"
+              ],
+              "type": "string"
+            },
+            "title": "Prevents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "action",
+          "prevents",
+          "at"
+        ],
+        "title": "ApplicabilityBlocker",
+        "type": "object"
+      },
+      "ApplicabilityCandidate": {
+        "properties": {
+          "candidate_no": {
+            "title": "Candidate No",
+            "type": "integer"
+          },
+          "candidate_sha256": {
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "decided_by_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By Ref"
+          },
+          "decision_comment": {
+            "title": "Decision Comment",
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "document": {
+            "additionalProperties": true,
+            "description": "The policy exactly as submitted. It never changes.",
+            "title": "Document",
+            "type": "object"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "draft_revision": {
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityCandidateEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "evidence_recorded_at": {
+            "title": "Evidence Recorded At",
+            "type": "string"
+          },
+          "evidence_run_id": {
+            "title": "Evidence Run Id",
+            "type": "string"
+          },
+          "evidence_run_sha256": {
+            "title": "Evidence Run Sha256",
+            "type": "string"
+          },
+          "evidence_suite": {
+            "title": "Evidence Suite",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "next_version_no": {
+            "title": "Next Version No",
+            "type": "integer"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "published_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published By"
+          },
+          "published_now": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Now"
+          },
+          "requirements": {
+            "title": "Requirements",
+            "type": "integer"
+          },
+          "revalidation": {
+            "description": "The frozen candidate checked against what exists now. Empty: nothing prevents the next step.",
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityBlocker"
+            },
+            "title": "Revalidation",
+            "type": "array"
+          },
+          "selection": {
+            "description": "Requirement by requirement: which surveys, at which exact versions.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Selection",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "SUBMITTED",
+              "APPROVED",
+              "RETURNED",
+              "WITHDRAWN",
+              "PUBLISHED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submission_note": {
+            "title": "Submission Note",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitted_by": {
+            "title": "Submitted By",
+            "type": "string"
+          },
+          "submitted_by_ref": {
+            "title": "Submitted By Ref",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "you_decided": {
+            "title": "You Decided",
+            "type": "boolean"
+          },
+          "you_submitted": {
+            "title": "You Submitted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "market_code",
+          "candidate_no",
+          "status",
+          "draft_revision",
+          "document_sha256",
+          "manifest_sha256",
+          "candidate_sha256",
+          "evidence_run_id",
+          "evidence_run_sha256",
+          "evidence_suite",
+          "evidence_recorded_at",
+          "requirements",
+          "submitted_by",
+          "submitted_by_ref",
+          "submitted_at",
+          "submission_note",
+          "decided_by",
+          "decided_by_ref",
+          "decided_at",
+          "decision_comment",
+          "published_by",
+          "published_at",
+          "document",
+          "selection",
+          "dependencies",
+          "evidence",
+          "revalidation",
+          "events",
+          "version",
+          "next_version_no",
+          "published_now",
+          "you_submitted",
+          "you_decided"
+        ],
+        "title": "ApplicabilityCandidate",
+        "type": "object"
+      },
+      "ApplicabilityCandidateEvent": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "comment": {
+            "title": "Comment",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "event",
+          "actor",
+          "comment",
+          "detail",
+          "occurred_at"
+        ],
+        "title": "ApplicabilityCandidateEvent",
+        "type": "object"
+      },
+      "ApplicabilityCandidatePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityCandidateSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ApplicabilityCandidatePage",
+        "type": "object"
+      },
+      "ApplicabilityCandidateSummary": {
+        "properties": {
+          "candidate_no": {
+            "title": "Candidate No",
+            "type": "integer"
+          },
+          "candidate_sha256": {
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "decided_by_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By Ref"
+          },
+          "decision_comment": {
+            "title": "Decision Comment",
+            "type": "string"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "draft_revision": {
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "evidence_recorded_at": {
+            "title": "Evidence Recorded At",
+            "type": "string"
+          },
+          "evidence_run_id": {
+            "title": "Evidence Run Id",
+            "type": "string"
+          },
+          "evidence_run_sha256": {
+            "title": "Evidence Run Sha256",
+            "type": "string"
+          },
+          "evidence_suite": {
+            "title": "Evidence Suite",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "published_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published By"
+          },
+          "requirements": {
+            "title": "Requirements",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "SUBMITTED",
+              "APPROVED",
+              "RETURNED",
+              "WITHDRAWN",
+              "PUBLISHED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submission_note": {
+            "title": "Submission Note",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitted_by": {
+            "title": "Submitted By",
+            "type": "string"
+          },
+          "submitted_by_ref": {
+            "title": "Submitted By Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "market_code",
+          "candidate_no",
+          "status",
+          "draft_revision",
+          "document_sha256",
+          "manifest_sha256",
+          "candidate_sha256",
+          "evidence_run_id",
+          "evidence_run_sha256",
+          "evidence_suite",
+          "evidence_recorded_at",
+          "requirements",
+          "submitted_by",
+          "submitted_by_ref",
+          "submitted_at",
+          "submission_note",
+          "decided_by",
+          "decided_by_ref",
+          "decided_at",
+          "decision_comment",
+          "published_by",
+          "published_at"
+        ],
+        "title": "ApplicabilityCandidateSummary",
+        "type": "object"
+      },
       "ApplicabilityDecisionIn": {
         "properties": {
           "comment": {
@@ -1035,6 +1606,35 @@
           "verdict"
         ],
         "title": "ApplicabilityDecisionIn",
+        "type": "object"
+      },
+      "ApplicabilityDecisionPolicyIn": {
+        "properties": {
+          "candidate_sha256": {
+            "description": "The fingerprint of the candidate the checker reviewed.",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "comment": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Comment",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "APPROVE",
+              "RETURN"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict",
+          "candidate_sha256"
+        ],
+        "title": "ApplicabilityDecisionPolicyIn",
         "type": "object"
       },
       "ApplicabilityDiagnostic": {
@@ -1197,6 +1797,149 @@
           "version_id"
         ],
         "title": "ApplicabilityEvent",
+        "type": "object"
+      },
+      "ApplicabilityImpact": {
+        "properties": {
+          "after": {
+            "additionalProperties": true,
+            "title": "After",
+            "type": "object"
+          },
+          "before": {
+            "additionalProperties": true,
+            "title": "Before",
+            "type": "object"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "integer"
+          },
+          "dataset": {
+            "additionalProperties": true,
+            "title": "Dataset",
+            "type": "object"
+          },
+          "dependency_changes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependency Changes",
+            "type": "array"
+          },
+          "document_changed": {
+            "title": "Document Changed",
+            "type": "boolean"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "reproducible": {
+            "title": "Reproducible",
+            "type": "boolean"
+          },
+          "requirements_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirements Added",
+            "type": "array"
+          },
+          "requirements_changed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirements Changed",
+            "type": "array"
+          },
+          "requirements_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirements Removed",
+            "type": "array"
+          },
+          "scenarios": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Scenarios",
+            "type": "array"
+          },
+          "scope_changed": {
+            "title": "Scope Changed",
+            "type": "boolean"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "why_not_reproducible": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Why Not Reproducible"
+          }
+        },
+        "required": [
+          "policy_id",
+          "before",
+          "after",
+          "dataset",
+          "reproducible",
+          "why_not_reproducible",
+          "document_changed",
+          "dependency_changes",
+          "requirements_added",
+          "requirements_removed",
+          "requirements_changed",
+          "scope_changed",
+          "scenarios",
+          "changed",
+          "unchanged",
+          "note"
+        ],
+        "title": "ApplicabilityImpact",
+        "type": "object"
+      },
+      "ApplicabilityImpactIn": {
+        "properties": {
+          "after": {
+            "additionalProperties": true,
+            "title": "After",
+            "type": "object"
+          },
+          "before": {
+            "additionalProperties": true,
+            "description": "{kind: DRAFT | CANDIDATE | VERSION, id?}",
+            "title": "Before",
+            "type": "object"
+          },
+          "dataset_run_id": {
+            "description": "A recorded run of this policy: its scenarios, as recorded, are the fixed dataset for BOTH sides.",
+            "format": "uuid",
+            "title": "Dataset Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_run_id",
+          "before",
+          "after"
+        ],
+        "title": "ApplicabilityImpactIn",
         "type": "object"
       },
       "ApplicabilityPin": {
@@ -2035,6 +2778,517 @@
         "title": "ApplicabilityPolicyUse",
         "type": "object"
       },
+      "ApplicabilityPolicyVersion": {
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "title": "Approved By",
+            "type": "string"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "candidate_sha256": {
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "draft_revision": {
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityCandidateEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "evidence_run_id": {
+            "title": "Evidence Run Id",
+            "type": "string"
+          },
+          "evidence_run_sha256": {
+            "title": "Evidence Run Sha256",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "title": "Published By",
+            "type": "string"
+          },
+          "requirements": {
+            "title": "Requirements",
+            "type": "integer"
+          },
+          "selection": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Selection",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitted_by": {
+            "title": "Submitted By",
+            "type": "string"
+          },
+          "superseded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded At"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          },
+          "version_sha256": {
+            "title": "Version Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "market_code",
+          "version_no",
+          "status",
+          "candidate_id",
+          "document_sha256",
+          "manifest_sha256",
+          "candidate_sha256",
+          "version_sha256",
+          "evidence_run_id",
+          "evidence_run_sha256",
+          "requirements",
+          "published_by",
+          "published_at",
+          "superseded_at",
+          "document",
+          "selection",
+          "dependencies",
+          "evidence",
+          "submitted_by",
+          "submitted_at",
+          "approved_by",
+          "approved_at",
+          "draft_revision",
+          "events"
+        ],
+        "title": "ApplicabilityPolicyVersion",
+        "type": "object"
+      },
+      "ApplicabilityPolicyVersionList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityPolicyVersionSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ApplicabilityPolicyVersionList",
+        "type": "object"
+      },
+      "ApplicabilityPolicyVersionSummary": {
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "candidate_sha256": {
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "evidence_run_id": {
+            "title": "Evidence Run Id",
+            "type": "string"
+          },
+          "evidence_run_sha256": {
+            "title": "Evidence Run Sha256",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "title": "Published By",
+            "type": "string"
+          },
+          "requirements": {
+            "title": "Requirements",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "superseded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded At"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          },
+          "version_sha256": {
+            "title": "Version Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "market_code",
+          "version_no",
+          "status",
+          "candidate_id",
+          "document_sha256",
+          "manifest_sha256",
+          "candidate_sha256",
+          "version_sha256",
+          "evidence_run_id",
+          "evidence_run_sha256",
+          "requirements",
+          "published_by",
+          "published_at",
+          "superseded_at"
+        ],
+        "title": "ApplicabilityPolicyVersionSummary",
+        "type": "object"
+      },
+      "ApplicabilityPolicyWithdrawIn": {
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ApplicabilityPolicyWithdrawIn",
+        "type": "object"
+      },
+      "ApplicabilityPublishPolicyIn": {
+        "properties": {
+          "candidate_sha256": {
+            "description": "The fingerprint of the approved candidate, confirmed by the publisher.",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "version_no": {
+            "description": "The version number this publication creates, confirmed by the publisher.",
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_sha256",
+          "version_no"
+        ],
+        "title": "ApplicabilityPublishPolicyIn",
+        "type": "object"
+      },
+      "ApplicabilityReadiness": {
+        "properties": {
+          "blockers": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityBlocker"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "dependencies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "draft_revision": {
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run the author chose, examined: fingerprints, coverage, independence, provenance.",
+            "title": "Evidence"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "notices": {
+            "description": "Worth knowing, not blocking — a newer published version of a pinned item, say.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
+          "open_candidate": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Candidate"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Fingerprint"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
+          "ready": {
+            "description": "True only when no blocker prevents submission.",
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "runs": {
+            "description": "The recorded runs of this policy to choose from. None is chosen for the author.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "saved_at": {
+            "title": "Saved At",
+            "type": "string"
+          },
+          "saved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved By"
+          },
+          "you": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "You"
+          }
+        },
+        "required": [
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "market_code",
+          "draft_revision",
+          "document_sha256",
+          "manifest_sha256",
+          "policy_fingerprint",
+          "saved_by",
+          "saved_at",
+          "ready",
+          "blockers",
+          "notices",
+          "dependencies",
+          "evidence",
+          "runs",
+          "open_candidate",
+          "published",
+          "you"
+        ],
+        "title": "ApplicabilityReadiness",
+        "type": "object"
+      },
       "ApplicabilityRevisionIn": {
         "properties": {
           "expected_revision": {
@@ -2230,12 +3484,19 @@
           "suite_revision": {
             "title": "Suite Revision",
             "type": "integer"
+          },
+          "target": {
+            "additionalProperties": true,
+            "description": "Exactly what was evaluated: the saved draft at a revision, a candidate, or a published version — with its fingerprints.",
+            "title": "Target",
+            "type": "object"
           }
         },
         "required": [
           "id",
           "market_code",
           "record_class",
+          "target",
           "suite_id",
           "suite_code",
           "suite_name",
@@ -2371,6 +3632,19 @@
             "minLength": 8,
             "title": "Idempotency Key",
             "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "APPL-X4b: exactly what to evaluate — {kind: DRAFT, revision} | {kind: CANDIDATE, id} | {kind: VERSION, id}. REQUIRED once the policy has a candidate or a published version; nothing is assumed then.",
+            "title": "Target"
           }
         },
         "required": [
@@ -2816,12 +4090,19 @@
           "suite_revision": {
             "title": "Suite Revision",
             "type": "integer"
+          },
+          "target": {
+            "additionalProperties": true,
+            "description": "Exactly what was evaluated: the saved draft at a revision, a candidate, or a published version — with its fingerprints.",
+            "title": "Target",
+            "type": "object"
           }
         },
         "required": [
           "id",
           "market_code",
           "record_class",
+          "target",
           "suite_id",
           "suite_code",
           "suite_name",
@@ -2849,6 +4130,35 @@
           "created_by"
         ],
         "title": "ApplicabilityRunSummary",
+        "type": "object"
+      },
+      "ApplicabilityRunTargets": {
+        "properties": {
+          "items": {
+            "description": "The saved working draft, open candidates and published versions, each with status and fingerprints.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "must_choose": {
+            "description": "True once there is more than the working draft: a run must then name its target.",
+            "title": "Must Choose",
+            "type": "boolean"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "items",
+          "must_choose"
+        ],
+        "title": "ApplicabilityRunTargets",
         "type": "object"
       },
       "ApplicabilityRunVerification": {
@@ -4082,6 +5392,50 @@
         "title": "ApplicabilitySubmitIn",
         "type": "object"
       },
+      "ApplicabilitySubmitPolicyIn": {
+        "properties": {
+          "document_sha256": {
+            "description": "The policy document fingerprint the author was shown and confirms.",
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "manifest_sha256": {
+            "description": "The dependency manifest fingerprint the author was shown and confirms.",
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Note",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "The qualifying recorded run the author chose.",
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_sha256": {
+            "description": "The evidence run fingerprint the author was shown and confirms.",
+            "title": "Run Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "run_id",
+          "document_sha256",
+          "manifest_sha256",
+          "run_sha256"
+        ],
+        "title": "ApplicabilitySubmitPolicyIn",
+        "type": "object"
+      },
       "ApplicabilitySuite": {
         "properties": {
           "code": {
@@ -4365,6 +5719,29 @@
               }
             ],
             "title": "Expectation"
+          },
+          "expectation_stated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectation Stated At"
+          },
+          "expectation_stated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who stated this expected outcome (stamped by the server when its content changes).",
+            "title": "Expectation Stated By"
           },
           "facts": {
             "additionalProperties": true,
@@ -5043,6 +6420,133 @@
           "is_approver"
         ],
         "title": "ApplicabilityVersion",
+        "type": "object"
+      },
+      "ApplicabilityVersionUsage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicabilityVersionUse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ApplicabilityVersionUsage",
+        "type": "object"
+      },
+      "ApplicabilityVersionUse": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "pinned_version_no": {
+            "title": "Pinned Version No",
+            "type": "integer"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_id",
+          "policy_code",
+          "policy_name",
+          "version_no",
+          "status",
+          "kind",
+          "code",
+          "pinned_version_no",
+          "content_sha256"
+        ],
+        "title": "ApplicabilityVersionUse",
+        "type": "object"
+      },
+      "ApplicabilityVersionVerification": {
+        "properties": {
+          "evidence_reproduced": {
+            "title": "Evidence Reproduced",
+            "type": "boolean"
+          },
+          "fingerprints_intact": {
+            "title": "Fingerprints Intact",
+            "type": "boolean"
+          },
+          "identical_to_candidate": {
+            "title": "Identical To Candidate",
+            "type": "boolean"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "results_checked": {
+            "title": "Results Checked",
+            "type": "integer"
+          },
+          "results_reproduced": {
+            "title": "Results Reproduced",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_id",
+          "version_no",
+          "status",
+          "fingerprints_intact",
+          "identical_to_candidate",
+          "evidence_reproduced",
+          "results_checked",
+          "results_reproduced",
+          "verified",
+          "note"
+        ],
+        "title": "ApplicabilityVersionVerification",
         "type": "object"
       },
       "ApplicabilityWithdrawIn": {
@@ -8439,6 +9943,178 @@
         "title": "ExternalRefOut",
         "type": "object"
       },
+      "FactCorrespondence": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "record_class": {
+            "const": "SYNTHETIC",
+            "title": "Record Class",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "market_code",
+          "code",
+          "version_no",
+          "record_class",
+          "name",
+          "description",
+          "entries",
+          "document_sha256",
+          "created_by",
+          "created_by_name",
+          "created_at",
+          "note"
+        ],
+        "title": "FactCorrespondence",
+        "type": "object"
+      },
+      "FactCorrespondenceCatalog": {
+        "properties": {
+          "fields": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "variables": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Variables",
+            "type": "array"
+          }
+        },
+        "required": [
+          "variables",
+          "fields",
+          "rules"
+        ],
+        "title": "FactCorrespondenceCatalog",
+        "type": "object"
+      },
+      "FactCorrespondenceIn": {
+        "properties": {
+          "code": {
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Code",
+            "type": "string"
+          },
+          "document": {
+            "additionalProperties": true,
+            "description": "{name, description, entries: [{source: {version_id}, target: {field}, rule: 'IDENTITY'}]}",
+            "title": "Document",
+            "type": "object"
+          },
+          "market_code": {
+            "maxLength": 40,
+            "title": "Market Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "market_code",
+          "code",
+          "document"
+        ],
+        "title": "FactCorrespondenceIn",
+        "type": "object"
+      },
+      "FactCorrespondencePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FactCorrespondence"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "FactCorrespondencePage",
+        "type": "object"
+      },
       "FactSnapshotOut": {
         "properties": {
           "captured_at": {
@@ -11520,6 +13196,1657 @@
           "callback_request"
         ],
         "title": "IntakeTransaction",
+        "type": "object"
+      },
+      "JourneyAbandonIn": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 10,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "reason"
+        ],
+        "title": "JourneyAbandonIn",
+        "type": "object"
+      },
+      "JourneyAnswerIn": {
+        "properties": {
+          "answer": {
+            "additionalProperties": true,
+            "description": "choice | choices | text | other_text | number | acknowledged — or {non_answer: kind}.",
+            "title": "Answer",
+            "type": "object"
+          },
+          "expected_inputs": {
+            "description": "The concurrency token of that turn.",
+            "minimum": 0.0,
+            "title": "Expected Inputs",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 80,
+            "minLength": 8,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "interaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JourneyInteraction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "item_key": {
+            "description": "The turn being answered, exactly as the runtime gave it.",
+            "maxLength": 240,
+            "title": "Item Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_key",
+          "expected_inputs",
+          "idempotency_key"
+        ],
+        "title": "JourneyAnswerIn",
+        "type": "object"
+      },
+      "JourneyAnswerOut": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The machine-readable reason of a rejection.",
+            "title": "Code"
+          },
+          "recorded_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded Seq"
+          },
+          "replayed": {
+            "description": "True when this is the stored result of an earlier identical submission.",
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "result": {
+            "enum": [
+              "ACCEPTED",
+              "REJECTED"
+            ],
+            "title": "Result",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JourneyState"
+          }
+        },
+        "required": [
+          "result",
+          "code",
+          "replayed",
+          "recorded_seq",
+          "state"
+        ],
+        "title": "JourneyAnswerOut",
+        "type": "object"
+      },
+      "JourneyCreateIn": {
+        "properties": {
+          "confirm_superseded": {
+            "default": false,
+            "description": "Required, explicitly, to run against a superseded version.",
+            "title": "Confirm Superseded",
+            "type": "boolean"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "description": "Synthetic application facts by variable code. null = not known; absent = not provided.",
+            "title": "Facts",
+            "type": "object"
+          },
+          "label": {
+            "default": "",
+            "maxLength": 160,
+            "title": "Label",
+            "type": "string"
+          },
+          "origin_scenario_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A saved synthetic scenario the facts were copied from, by value.",
+            "title": "Origin Scenario Id"
+          },
+          "policy_version_id": {
+            "description": "One exact published policy version. Never a draft; never chosen for the person.",
+            "format": "uuid",
+            "title": "Policy Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_version_id",
+          "facts"
+        ],
+        "title": "JourneyCreateIn",
+        "type": "object"
+      },
+      "JourneyInteraction": {
+        "description": "What a voice adapter may attach later. PROPOSED interaction evidence: recorded, never an accepted fact.",
+        "properties": {
+          "clarification_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarification Required"
+          },
+          "delivery_evidence_ref": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Evidence Ref"
+          },
+          "proposed_answer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed Answer"
+          },
+          "recognition_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recognition Confidence"
+          },
+          "transcript_ref": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript Ref"
+          }
+        },
+        "title": "JourneyInteraction",
+        "type": "object"
+      },
+      "JourneyNext": {
+        "properties": {
+          "condition": {
+            "anyOf": [
+              {
+                "enum": [
+                  "REPLAY_DRIFT",
+                  "POLICY_UNRESOLVED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "kind": {
+            "enum": [
+              "TURN",
+              "END"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "READY",
+              "RUNNING",
+              "ALL_SURVEYS_COMPLETED",
+              "CROSS_SURVEY_POLICY_UNRESOLVED",
+              "ENDED_INCOMPLETE",
+              "ABANDONED",
+              "NO_SURVEY_REQUIRED",
+              "SELECTION_UNRESOLVED",
+              "OUT_OF_SCOPE",
+              "SCOPE_UNRESOLVED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JourneyTurn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "turn",
+          "end",
+          "status",
+          "condition"
+        ],
+        "title": "JourneyNext",
+        "type": "object"
+      },
+      "JourneyOptions": {
+        "properties": {
+          "current_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version Id"
+          },
+          "current_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version No"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "format": "uuid",
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "policy_version_id": {
+            "format": "uuid",
+            "title": "Policy Version Id",
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Profiles",
+            "type": "array"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "requirements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "variables": {
+            "description": "The application facts this version reads, from its own frozen definitions.",
+            "items": {
+              "$ref": "#/components/schemas/JourneyVariable"
+            },
+            "title": "Variables",
+            "type": "array"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          },
+          "version_sha256": {
+            "title": "Version Sha256",
+            "type": "string"
+          },
+          "version_status": {
+            "enum": [
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "title": "Version Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "policy_version_id",
+          "version_no",
+          "version_status",
+          "published_at",
+          "current_version_id",
+          "current_version_no",
+          "version_sha256",
+          "document_sha256",
+          "manifest_sha256",
+          "profiles",
+          "variables",
+          "requirements"
+        ],
+        "title": "JourneyOptions",
+        "type": "object"
+      },
+      "JourneyPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JourneySummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "JourneyPage",
+        "type": "object"
+      },
+      "JourneyPolicyVersion": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "format": "uuid",
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Name"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          },
+          "version_sha256": {
+            "title": "Version Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "market_code",
+          "version_no",
+          "status",
+          "published_at",
+          "version_sha256"
+        ],
+        "title": "JourneyPolicyVersion",
+        "type": "object"
+      },
+      "JourneyPolicyVersionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JourneyPolicyVersion"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "JourneyPolicyVersionPage",
+        "type": "object"
+      },
+      "JourneySelectIn": {
+        "properties": {
+          "facts": {
+            "additionalProperties": true,
+            "description": "Synthetic application facts by variable code. null = not known; absent = not provided.",
+            "title": "Facts",
+            "type": "object"
+          },
+          "policy_version_id": {
+            "description": "One exact published policy version. Never a draft; never chosen for the person.",
+            "format": "uuid",
+            "title": "Policy Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_version_id",
+          "facts"
+        ],
+        "title": "JourneySelectIn",
+        "type": "object"
+      },
+      "JourneySelection": {
+        "properties": {
+          "current_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version Id"
+          },
+          "current_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version No"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "evaluator_contract": {
+            "title": "Evaluator Contract",
+            "type": "string"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "title": "Facts",
+            "type": "object"
+          },
+          "facts_sha256": {
+            "title": "Facts Sha256",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "SURVEYS_SELECTED",
+              "NO_SURVEY_REQUIRED",
+              "UNRESOLVED",
+              "OUT_OF_SCOPE",
+              "SCOPE_UNRESOLVED"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "plan": {
+            "additionalProperties": true,
+            "description": "The evaluator's complete plan: selected, pending, excluded, needs, requirements with their traces.",
+            "title": "Plan",
+            "type": "object"
+          },
+          "plan_sha256": {
+            "title": "Plan Sha256",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_id": {
+            "format": "uuid",
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_name": {
+            "title": "Policy Name",
+            "type": "string"
+          },
+          "policy_version_id": {
+            "format": "uuid",
+            "title": "Policy Version Id",
+            "type": "string"
+          },
+          "record_class": {
+            "const": "SYNTHETIC",
+            "title": "Record Class",
+            "type": "string"
+          },
+          "selection_source": {
+            "const": "APPLICABILITY",
+            "title": "Selection Source",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          },
+          "version_sha256": {
+            "title": "Version Sha256",
+            "type": "string"
+          },
+          "version_status": {
+            "enum": [
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "title": "Version Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_class",
+          "selection_source",
+          "note",
+          "evaluator_contract",
+          "policy_id",
+          "policy_code",
+          "policy_name",
+          "policy_version_id",
+          "version_no",
+          "version_status",
+          "current_version_id",
+          "current_version_no",
+          "version_sha256",
+          "document_sha256",
+          "manifest_sha256",
+          "facts",
+          "facts_sha256",
+          "outcome",
+          "plan",
+          "plan_sha256"
+        ],
+        "title": "JourneySelection",
+        "type": "object"
+      },
+      "JourneyStartIn": {
+        "properties": {
+          "correspondence_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A fact correspondence version the person CHOSE. None is applied by default.",
+            "title": "Correspondence Id"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "survey_facts": {
+            "additionalProperties": true,
+            "description": "Survey facts typed by the person, by catalog field. null = explicitly not known.",
+            "title": "Survey Facts",
+            "type": "object"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "JourneyStartIn",
+        "type": "object"
+      },
+      "JourneyState": {
+        "properties": {
+          "condition": {
+            "anyOf": [
+              {
+                "enum": [
+                  "REPLAY_DRIFT",
+                  "POLICY_UNRESOLVED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "contract": {
+            "title": "Contract",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "current_step": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Step"
+          },
+          "end_detail": {
+            "additionalProperties": true,
+            "title": "End Detail",
+            "type": "object"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "expected_inputs": {
+            "title": "Expected Inputs",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "market_code": {
+            "title": "Market Code",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "progress": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Progress",
+            "type": "object"
+          },
+          "record_class": {
+            "const": "SYNTHETIC",
+            "title": "Record Class",
+            "type": "string"
+          },
+          "requirements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "selection": {
+            "additionalProperties": true,
+            "title": "Selection",
+            "type": "object"
+          },
+          "selection_source": {
+            "const": "APPLICABILITY",
+            "title": "Selection Source",
+            "type": "string"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was frozen at start: the correspondence used, each survey fact and where it came from.",
+            "title": "Start"
+          },
+          "start_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Sha256"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "READY",
+              "RUNNING",
+              "ALL_SURVEYS_COMPLETED",
+              "CROSS_SURVEY_POLICY_UNRESOLVED",
+              "ENDED_INCOMPLETE",
+              "ABANDONED",
+              "NO_SURVEY_REQUIRED",
+              "SELECTION_UNRESOLVED",
+              "OUT_OF_SCOPE",
+              "SCOPE_UNRESOLVED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "survey_facts": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survey Facts"
+          },
+          "survey_facts_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survey Facts Sha256"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JourneyTurn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "contract",
+          "record_class",
+          "selection_source",
+          "note",
+          "market_code",
+          "label",
+          "status",
+          "condition",
+          "revision",
+          "expected_inputs",
+          "created_by",
+          "created_at",
+          "started_at",
+          "ended_at",
+          "end_detail",
+          "selection",
+          "start",
+          "start_sha256",
+          "survey_facts",
+          "survey_facts_sha256",
+          "steps",
+          "current_step",
+          "turn",
+          "progress",
+          "requirements",
+          "events"
+        ],
+        "title": "JourneyState",
+        "type": "object"
+      },
+      "JourneySummary": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "SURVEYS_SELECTED",
+              "NO_SURVEY_REQUIRED",
+              "UNRESOLVED",
+              "OUT_OF_SCOPE",
+              "SCOPE_UNRESOLVED"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "policy_code": {
+            "title": "Policy Code",
+            "type": "string"
+          },
+          "policy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Name"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "READY",
+              "RUNNING",
+              "ALL_SURVEYS_COMPLETED",
+              "CROSS_SURVEY_POLICY_UNRESOLVED",
+              "ENDED_INCOMPLETE",
+              "ABANDONED",
+              "NO_SURVEY_REQUIRED",
+              "SELECTION_UNRESOLVED",
+              "OUT_OF_SCOPE",
+              "SCOPE_UNRESOLVED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "surveys": {
+            "title": "Surveys",
+            "type": "integer"
+          },
+          "surveys_completed": {
+            "title": "Surveys Completed",
+            "type": "integer"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          },
+          "version_status": {
+            "title": "Version Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "status",
+          "revision",
+          "created_at",
+          "started_at",
+          "ended_at",
+          "created_by",
+          "created_by_name",
+          "policy_code",
+          "policy_name",
+          "version_no",
+          "version_status",
+          "outcome",
+          "surveys",
+          "surveys_completed"
+        ],
+        "title": "JourneySummary",
+        "type": "object"
+      },
+      "JourneySurveyFacts": {
+        "properties": {
+          "conflicts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "correspondence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correspondence"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "fields": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "missing": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "survey_facts": {
+            "additionalProperties": true,
+            "title": "Survey Facts",
+            "type": "object"
+          },
+          "survey_facts_sha256": {
+            "title": "Survey Facts Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "correspondence",
+          "entries",
+          "fields",
+          "missing",
+          "conflicts",
+          "survey_facts",
+          "survey_facts_sha256",
+          "ready"
+        ],
+        "title": "JourneySurveyFacts",
+        "type": "object"
+      },
+      "JourneySurveyFactsIn": {
+        "properties": {
+          "correspondence_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A fact correspondence version the person CHOSE. None is applied by default.",
+            "title": "Correspondence Id"
+          },
+          "survey_facts": {
+            "additionalProperties": true,
+            "description": "Survey facts typed by the person, by catalog field. null = explicitly not known.",
+            "title": "Survey Facts",
+            "type": "object"
+          }
+        },
+        "title": "JourneySurveyFactsIn",
+        "type": "object"
+      },
+      "JourneyTurn": {
+        "properties": {
+          "allowed_non_answers": {
+            "items": {
+              "enum": [
+                "NOT_ACKNOWLEDGED",
+                "EMPTY_TEXT",
+                "NONE_SELECTED"
+              ],
+              "type": "string"
+            },
+            "title": "Allowed Non Answers",
+            "type": "array"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "contract": {
+            "title": "Contract",
+            "type": "string"
+          },
+          "expected_inputs": {
+            "description": "The concurrency token: how many inputs the journey holds. A submission names it.",
+            "title": "Expected Inputs",
+            "type": "integer"
+          },
+          "expects": {
+            "$ref": "#/components/schemas/JourneyTurnExpects"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item"
+          },
+          "item_key": {
+            "description": "The identity of this turn. A submission names it.",
+            "title": "Item Key",
+            "type": "string"
+          },
+          "journey_id": {
+            "format": "uuid",
+            "title": "Journey Id",
+            "type": "string"
+          },
+          "module": {
+            "additionalProperties": true,
+            "title": "Module",
+            "type": "object"
+          },
+          "policy_unresolved": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Unresolved"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/JourneyTurnPrompt"
+          },
+          "question_no": {
+            "title": "Question No",
+            "type": "integer"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "survey": {
+            "additionalProperties": true,
+            "description": "The exact published survey version being executed.",
+            "title": "Survey",
+            "type": "object"
+          },
+          "turn_token": {
+            "title": "Turn Token",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract",
+          "journey_id",
+          "step",
+          "steps",
+          "survey",
+          "item_key",
+          "item",
+          "attempt",
+          "module",
+          "question_no",
+          "prompt",
+          "expects",
+          "allowed_non_answers",
+          "policy_unresolved",
+          "expected_inputs",
+          "turn_token"
+        ],
+        "title": "JourneyTurn",
+        "type": "object"
+      },
+      "JourneyTurnExpects": {
+        "properties": {
+          "answer_type": {
+            "title": "Answer Type",
+            "type": "string"
+          },
+          "number_rule": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number Rule"
+          },
+          "options": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection"
+          },
+          "text_rule": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Rule"
+          }
+        },
+        "required": [
+          "answer_type",
+          "options",
+          "selection",
+          "number_rule",
+          "text_rule"
+        ],
+        "title": "JourneyTurnExpects",
+        "type": "object"
+      },
+      "JourneyTurnPrompt": {
+        "properties": {
+          "delivery_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Mode"
+          },
+          "exact_wording_required": {
+            "title": "Exact Wording Required",
+            "type": "boolean"
+          },
+          "followup": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether this is a follow-up question.",
+            "title": "Followup"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The approved wording, rendered by the engine. Never rewritten by a client.",
+            "title": "Text"
+          }
+        },
+        "required": [
+          "text",
+          "delivery_mode",
+          "exact_wording_required"
+        ],
+        "title": "JourneyTurnPrompt",
+        "type": "object"
+      },
+      "JourneyVariable": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "derived": {
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "code",
+          "derived"
+        ],
+        "title": "JourneyVariable",
+        "type": "object"
+      },
+      "JourneyVerification": {
+        "properties": {
+          "checks": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "failed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "inputs": {
+            "title": "Inputs",
+            "type": "integer"
+          },
+          "journey_id": {
+            "format": "uuid",
+            "title": "Journey Id",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "selection_plan_sha256": {
+            "title": "Selection Plan Sha256",
+            "type": "string"
+          },
+          "start_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Sha256"
+          },
+          "status": {
+            "enum": [
+              "READY",
+              "RUNNING",
+              "ALL_SURVEYS_COMPLETED",
+              "CROSS_SURVEY_POLICY_UNRESOLVED",
+              "ENDED_INCOMPLETE",
+              "ABANDONED",
+              "NO_SURVEY_REQUIRED",
+              "SELECTION_UNRESOLVED",
+              "OUT_OF_SCOPE",
+              "SCOPE_UNRESOLVED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "journey_id",
+          "verified",
+          "status",
+          "checks",
+          "failed",
+          "selection_plan_sha256",
+          "start_sha256",
+          "inputs",
+          "note"
+        ],
+        "title": "JourneyVerification",
         "type": "object"
       },
       "KpiDrilldown": {
@@ -40059,6 +43386,1509 @@
         ]
       }
     },
+    "/api/v1/applicability/fact-correspondences": {
+      "get": {
+        "operationId": "applicability_fact_correspondence_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactCorrespondencePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Synthetic fact correspondences, every version",
+        "tags": [
+          "applicability-journeys"
+        ]
+      },
+      "post": {
+        "operationId": "applicability_fact_correspondence_save",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactCorrespondenceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactCorrespondence"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Save a NEW immutable version of a synthetic fact correspondence",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/fact-correspondences/catalog": {
+      "get": {
+        "operationId": "applicability_fact_correspondence_catalog",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "market_code",
+            "required": true,
+            "schema": {
+              "title": "Market Code",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactCorrespondenceCatalog"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "What a correspondence may connect: published application facts and survey catalog fields",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/fact-correspondences/{correspondence_id}": {
+      "get": {
+        "operationId": "applicability_fact_correspondence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "correspondence_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Correspondence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactCorrespondence"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "One immutable version of a fact correspondence",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journey-policy-versions": {
+      "get": {
+        "operationId": "applicability_journey_policy_versions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyPolicyVersionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Every published policy version a synthetic journey may be made against",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journey-policy-versions/{version_id}": {
+      "get": {
+        "operationId": "applicability_journey_policy_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyOptions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "One published policy version and the application facts it reads",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys": {
+      "get": {
+        "operationId": "applicability_journey_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Synthetic journeys, newest first",
+        "tags": [
+          "applicability-journeys"
+        ]
+      },
+      "post": {
+        "operationId": "applicability_journey_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Record the selection plan, immutably, and the synthetic journey over it",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/selection-preview": {
+      "post": {
+        "operationId": "applicability_journey_selection_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneySelectIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneySelection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "What a published version selects for these synthetic facts; records nothing",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}": {
+      "get": {
+        "operationId": "applicability_journey_state",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "The journey as it stands, replayed from what is recorded",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}/abandon": {
+      "post": {
+        "operationId": "applicability_journey_abandon",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyAbandonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "End an open journey, with a reason; everything recorded stays",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}/answers": {
+      "post": {
+        "operationId": "applicability_journey_submit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyAnswerIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyAnswerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "submit: propose one answer to exactly the current turn; retry-safe",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}/start": {
+      "post": {
+        "operationId": "applicability_journey_start",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyStartIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Freeze the survey facts and begin the first selected survey",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}/survey-facts": {
+      "post": {
+        "operationId": "applicability_journey_survey_facts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneySurveyFactsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneySurveyFacts"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Which survey facts the journey would run with, and where each comes from; records nothing",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}/turn": {
+      "get": {
+        "operationId": "applicability_journey_turn",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyNext"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "next: the one question the journey is waiting for, or how it ended",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
+    "/api/v1/applicability/journeys/{journey_id}/verify": {
+      "post": {
+        "operationId": "applicability_journey_verify",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyVerification"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Reproduce the journey from its own records; records nothing",
+        "tags": [
+          "applicability-journeys"
+        ]
+      }
+    },
     "/api/v1/applicability/policies": {
       "get": {
         "description": "Every saved policy of the caller's markets, most recently saved first.",
@@ -40780,6 +45610,110 @@
         ]
       }
     },
+    "/api/v1/applicability/policies/{policy_id}/impact": {
+      "post": {
+        "description": "What changes between two exact targets — draft, candidate or published version — over ONE fixed dataset: the\nscenarios of a recorded run, as recorded, on both sides. Records nothing.",
+        "operationId": "applicability_policy_impact",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicabilityImpactIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityImpact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Impact",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
     "/api/v1/applicability/policies/{policy_id}/inspect": {
       "post": {
         "description": "What the server says about a document, saved or not: its pins, every dependency and its state, diagnostics per\nrequirement, and whether it could be published. Writes nothing.",
@@ -40988,6 +45922,117 @@
         ]
       }
     },
+    "/api/v1/applicability/policies/{policy_id}/readiness": {
+      "get": {
+        "description": "Whether the SAVED revision can be submitted, and every reason why not: each blocker with what it concerns, the\nversions in conflict, how to clear it and which steps it prevents. ``run_id`` is the recorded run the author chose\nas evidence; none is chosen for them. Writes nothing.",
+        "operationId": "applicability_policy_readiness",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityReadiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Readiness",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
     "/api/v1/applicability/policies/{policy_id}/restore": {
       "post": {
         "operationId": "applicability_policy_restore",
@@ -41088,6 +46133,1158 @@
         "summary": "Bring an archived policy back",
         "tags": [
           "applicability-policies"
+        ]
+      }
+    },
+    "/api/v1/applicability/policies/{policy_id}/run-targets": {
+      "get": {
+        "description": "What a suite run of this policy can evaluate: the working draft at its revision, an open candidate, a published\nversion — each with its status and fingerprints.",
+        "operationId": "applicability_policy_run_targets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityRunTargets"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Run Targets",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policies/{policy_id}/submit": {
+      "post": {
+        "description": "Freeze an immutable candidate from the saved revision and the chosen run. Refused (409 PUBLICATION_BLOCKED, with\nevery blocker) unless the gate is clear, and unless the fingerprints the author confirms are the current ones.",
+        "operationId": "applicability_policy_submit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicabilitySubmitPolicyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityCandidate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Submit",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policies/{policy_id}/versions": {
+      "get": {
+        "description": "Every published version of a policy, newest first: the current one and the superseded ones.",
+        "operationId": "applicability_policy_versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityPolicyVersionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Versions",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-candidates": {
+      "get": {
+        "description": "Candidates of the caller's markets, newest first — including returned and withdrawn ones, which stay readable.",
+        "operationId": "applicability_policy_candidate_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "policy_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Policy Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "SUBMITTED",
+                    "APPROVED",
+                    "RETURNED",
+                    "WITHDRAWN",
+                    "PUBLISHED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityCandidatePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Candidate List",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-candidates/{candidate_id}": {
+      "get": {
+        "description": "Exactly what was submitted: the document, the manifest, the evidence with its provenance, the history — and the\ncandidate revalidated against what exists now.",
+        "operationId": "applicability_policy_candidate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityCandidate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Candidate Get",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-candidates/{candidate_id}/decision": {
+      "post": {
+        "description": "Approve or return a submitted candidate. Not by the person who submitted it (409 SAME_PERSON). The checker names\nthe fingerprint they reviewed; approval revalidates the frozen candidate first. A return needs a reason.",
+        "operationId": "applicability_policy_candidate_decide",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicabilityDecisionPolicyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityCandidate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Candidate Decide",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-candidates/{candidate_id}/publish": {
+      "post": {
+        "description": "Publish an APPROVED candidate as the next version. Not by its submitter or its checker (409 SAME_PERSON). The\nexact candidate is revalidated first — pinned versions, the evidence suite and scenarios, the reproduction of the\nrun — and nothing is refreshed or substituted. The version is written from the candidate, never from the draft.",
+        "operationId": "applicability_policy_candidate_publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicabilityPublishPolicyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityCandidate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Candidate Publish",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-candidates/{candidate_id}/withdraw": {
+      "post": {
+        "description": "Withdraw a candidate that is submitted or approved. Only by the person who submitted it. It stays readable.",
+        "operationId": "applicability_policy_candidate_withdraw",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicabilityPolicyWithdrawIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityCandidate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Candidate Withdraw",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-versions/usage": {
+      "get": {
+        "description": "Which published policy versions pin a library item or a survey, and at which exact version.",
+        "operationId": "applicability_policy_version_usage",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "VARIABLE",
+                    "PROFILE",
+                    "CONDITION",
+                    "SURVEY"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityVersionUsage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Version Usage",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-versions/{version_id}": {
+      "get": {
+        "description": "One published version, current or superseded: its document, manifest, evidence, the three people and its history.",
+        "operationId": "applicability_policy_version_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityPolicyVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Version Get",
+        "tags": [
+          "applicability-publication"
+        ]
+      }
+    },
+    "/api/v1/applicability/policy-versions/{version_id}/verify": {
+      "post": {
+        "description": "Check a published version against itself and re-evaluate its evidence run from the run's own record.",
+        "operationId": "applicability_policy_version_verify",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicabilityVersionVerification"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Applicability Policy Version Verify",
+        "tags": [
+          "applicability-publication"
         ]
       }
     },

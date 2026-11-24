@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     # APPL-X4a: persistent synthetic scenarios, regression suites and recorded evaluation runs. On only when policies
     # are on; OFF by default; needs migration 0040. No policy publication (APPL-X4b).
     applicability_scenarios_enabled: bool = False
+    # APPL-X4b: governed publication of applicability policies — readiness gate, immutable candidates, three-person
+    # approval, published versions. On only when scenarios are on; OFF by default; needs migration 0041.
+    applicability_publication_enabled: bool = False
+    # APPL-X5a: synthetic journeys over published policy versions — immutable selection plans, coordinated execution of
+    # the selected published surveys, the voice-neutral turn runtime. On only when publication AND survey simulation are
+    # on; OFF by default; needs migration 0042. Simulation only: nothing operational is read or written.
+    applicability_journeys_enabled: bool = False
     transcription_threads: int = 4
     # Defaults chosen from the golden dataset (S1.md "S1-D as built"); development indicators, not calibrated scores.
     transcript_low_logprob: float = -0.45

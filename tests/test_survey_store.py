@@ -25,7 +25,7 @@ from tests.support import APPLICABILITY_TABLES, Account, make_account, migrate
 from tests.survey_support import MARKETS, acks_for, actor_of, build_draft, fixture_bundle
 
 HEAD, BEFORE = (
-    "0040_applicability_scenarios",
+    "0042_applicability_journey",
     "0026_gpt_live_provider",
 )  # 0027 … 0036 are survey-only; 0037 adds two columns to rules; 0038 adds the applicability library
 SURVEY_TABLES = {
@@ -111,6 +111,14 @@ def test_the_migration_is_additive_and_points_at_no_script_table(db: Session) ->
     assert into_survey == {
         ("applicability_policy_dependency", "survey_definition"),
         ("applicability_policy_dependency", "survey_version"),
+        # … and the frozen manifest of a submitted policy candidate names the same published versions (APPL-X4b)
+        ("applicability_policy_candidate_dependency", "survey_definition"),
+        ("applicability_policy_candidate_dependency", "survey_version"),
+        # … and a step of a SYNTHETIC applicability journey names the exact published survey version it executes and
+        # the one simulation that executes it (APPL-X5a). References only: no survey table, column, trigger or row changes
+        ("applicability_journey_step", "survey_definition"),
+        ("applicability_journey_step", "survey_version"),
+        ("applicability_journey_step", "survey_simulation"),
     }
 
 

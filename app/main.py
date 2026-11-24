@@ -14,8 +14,10 @@ from app.api import (
     admin,
     admin_access,
     admin_config,
+    applicability_journeys,
     applicability_library,
     applicability_policies,
+    applicability_publication,
     applicability_scenarios,
     assignment_rules,
     auth,
@@ -101,8 +103,8 @@ async def _transcription_worker(app: FastAPI, every_s: float = 2.0) -> None:
             logging.getLogger("call360.transcript").exception("transcription pass failed")
 
 
-MIGRATION_HEAD = "0040_applicability_scenarios"
-#: Each of the last fourteen revisions only ADDS objects that are used when its own setting is on. A schema behind the
+MIGRATION_HEAD = "0042_applicability_journey"
+#: Each of the last sixteen revisions only ADDS objects that are used when its own setting is on. A schema behind the
 #: head therefore serves everything that is switched on correctly, and is accepted in exactly that case:
 #:   0027 (SS-03A, survey definitions)        — needed when `survey_definitions_enabled` is on;
 #:   0028 (LIB-1, server-issued codes)        — needed when `survey_library_enabled` is on;
@@ -118,8 +120,13 @@ MIGRATION_HEAD = "0040_applicability_scenarios"
 #:   0038 (APPL-X2, applicability library)   — needed when `applicability_library_enabled` is on.
 #:   0039 (APPL-X3, applicability policies)  — needed when `applicability_policies_enabled` (with the library) is on.
 #:   0040 (APPL-X4a, scenarios, suites, runs) — needed when `applicability_scenarios_enabled` (with policies) is on.
+#:   0041 (APPL-X4b, policy publication)     — needed when `applicability_publication_enabled` (with scenarios) is on.
+#:   0042 (APPL-X5a, synthetic journeys)     — needed when `applicability_journeys_enabled` (with publication and
+#:                                              survey simulation) is on.
 #: With a setting on, the schema must hold that setting's revision, or readiness fails closed.
 OPTIONAL_REVISIONS = (
+    "0042_applicability_journey",
+    "0041_applicability_publication",
     "0040_applicability_scenarios",
     "0039_applicability_policy",
     "0038_applicability_library",
@@ -189,24 +196,40 @@ def applicability_scenarios_on(settings: Settings) -> bool:
     return applicability_policies_on(settings) and settings.applicability_scenarios_enabled
 
 
+def applicability_publication_on(settings: Settings) -> bool:
+    """Publication needs a qualifying recorded run: on only when scenarios are."""
+    return applicability_scenarios_on(settings) and settings.applicability_publication_enabled
+
+
+def applicability_journeys_on(settings: Settings) -> bool:
+    """A journey reads a published policy version and runs survey simulations: on only when both are."""
+    return (
+        applicability_publication_on(settings)
+        and survey_simulation_on(settings)
+        and settings.applicability_journeys_enabled
+    )
+
+
 def acceptable_migration_heads(settings: Settings) -> tuple[str, ...]:
     """The head, and every earlier revision down to the newest one that something switched on needs."""
     needed = (
-        0 if applicability_scenarios_on(settings)
-        else 1 if applicability_policies_on(settings)
-        else 2 if settings.applicability_library_enabled
-        else 3 if settings.shared_rule_services_enabled
-        else 4 if survey_module_authoring_on(settings)
-        else 5 if survey_execution_assurance_on(settings)
-        else 6 if survey_control_policy_on(settings)
-        else 7 if survey_evaluation_on(settings)
-        else 8 if survey_coordinated_simulation_on(settings)
-        else 9 if survey_assignment_groups_on(settings)
-        else 10 if survey_assignment_on(settings)
-        else 11 if survey_simulation_on(settings)
-        else 12 if survey_library_on(settings)
-        else 13 if settings.survey_definitions_enabled
-        else 14
+        0 if applicability_journeys_on(settings)
+        else 1 if applicability_publication_on(settings)
+        else 2 if applicability_scenarios_on(settings)
+        else 3 if applicability_policies_on(settings)
+        else 4 if settings.applicability_library_enabled
+        else 5 if settings.shared_rule_services_enabled
+        else 6 if survey_module_authoring_on(settings)
+        else 7 if survey_execution_assurance_on(settings)
+        else 8 if survey_control_policy_on(settings)
+        else 9 if survey_evaluation_on(settings)
+        else 10 if survey_coordinated_simulation_on(settings)
+        else 11 if survey_assignment_groups_on(settings)
+        else 12 if survey_assignment_on(settings)
+        else 13 if survey_simulation_on(settings)
+        else 14 if survey_library_on(settings)
+        else 15 if settings.survey_definitions_enabled
+        else 16
     )  # fmt: skip
     return OPTIONAL_REVISIONS[: needed + 1]
 
@@ -328,6 +351,14 @@ def create_app(settings: Settings | None = None, *, with_database: bool = True) 
         # APPL-X4a: off by default; needs 0040. Saved synthetic scenarios, regression suites and immutable recorded
         # evaluation runs. No policy publication (APPL-X4b); nothing operational is read or written.
         app.include_router(applicability_scenarios.router)
+    if applicability_publication_on(settings):
+        # APPL-X4b: off by default; needs 0041. Readiness gate, immutable candidates, three-person publication and
+        # published policy versions. A published version starts nothing operational.
+        app.include_router(applicability_publication.router)
+    if applicability_journeys_on(settings):
+        # APPL-X5a: off by default; needs 0042. Synthetic journeys over published policy versions: an immutable
+        # selection plan, the selected published surveys executed in order, the voice-neutral turn runtime.
+        app.include_router(applicability_journeys.router)
     return app
 
 

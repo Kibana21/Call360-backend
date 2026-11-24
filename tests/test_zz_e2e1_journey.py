@@ -759,5 +759,5 @@ def test_the_journey_trace_exists_only_with_execution_assurance_and_adds_no_tabl
     op = on.openapi()["paths"]["/api/v1/survey-evaluation/journey-trace"]
     assert list(op) == ["get"]  # read-only: one GET, nothing that writes
     assert (
-        db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0040_applicability_scenarios"
+        db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0042_applicability_journey"
     )  # E2E-1 added no migration; the head is the one SHARED-1 added later

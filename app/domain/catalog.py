@@ -177,6 +177,22 @@ LATER_MIGRATION_TABLES: dict[str, tuple[str, ...]] = {
         "applicability_evaluation_run",
         "applicability_evaluation_result",
     ),
+    # APPL-X4b: immutable policy candidates, their manifest rows and history, and published policy versions
+    "0041_applicability_publication": (
+        "applicability_policy_candidate",
+        "applicability_policy_candidate_dependency",
+        "applicability_policy_candidate_event",
+        "applicability_policy_version",
+    ),
+    # APPL-X5a: synthetic journeys over published policy versions. A journey step names the ONE existing survey
+    # simulation that executes it; nothing here refers to a case, a session, a rule, a binding or a group.
+    "0042_applicability_journey": (
+        "applicability_fact_correspondence",
+        "applicability_selection_plan",
+        "applicability_journey",
+        "applicability_journey_step",
+        "applicability_journey_event",
+    ),
 }
 DEFERRED_TABLES = frozenset({"risk_override"})  # media_asset: S1-C; transcript_segment: S1-D; review_decision: S3-C
 

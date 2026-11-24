@@ -939,7 +939,9 @@ def test_with_the_library_setting_off_its_routes_do_not_exist_and_the_reference_
 
 def test_each_setting_demands_its_own_migration_and_no_more(settings: Settings) -> None:
     on = lambda **k: settings.model_copy(update=k)
-    h40, h39, h38, h37, h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26 = (
+    h42, h41, h40, h39, h38, h37, h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26 = (
+        "0042_applicability_journey",
+        "0041_applicability_publication",
         "0040_applicability_scenarios",
         "0039_applicability_policy",
         "0038_applicability_library",
@@ -956,8 +958,28 @@ def test_each_setting_demands_its_own_migration_and_no_more(settings: Settings) 
         "0027_survey_definitions",
         "0026_gpt_live_provider",
     )
-    full = (h40, h39, h38, h37, h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26)
-    assert MIGRATION_HEAD == h40
+    full = (h42, h41, h40, h39, h38, h37, h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26)
+    assert MIGRATION_HEAD == h42
+    # APPL-X5a: synthetic journeys need 0042, and are on only with publication AND survey simulation
+    everything_for_journeys = dict(
+        applicability_library_enabled=True, applicability_policies_enabled=True, applicability_scenarios_enabled=True, applicability_publication_enabled=True,
+        applicability_journeys_enabled=True, survey_definitions_enabled=True, survey_library_enabled=True, survey_simulation_enabled=True,
+    )  # fmt: skip
+    assert acceptable_migration_heads(on(**everything_for_journeys)) == full[:1]
+    assert acceptable_migration_heads(on(**{**everything_for_journeys, "survey_simulation_enabled": False})) == full[:2]
+    assert acceptable_migration_heads(on(**{**everything_for_journeys, "applicability_publication_enabled": False}))[-1] != h42
+    # APPL-X4b: policy publication needs 0041, and is on only with scenarios
+    assert (
+        acceptable_migration_heads(
+            on(
+                applicability_library_enabled=True,
+                applicability_policies_enabled=True,
+                applicability_scenarios_enabled=True,
+                applicability_publication_enabled=True,
+            )
+        )
+        == full[:2]
+    )
     # APPL-X4a: scenarios, suites and runs need 0040, and are on only with saved policies
     assert (
         acceptable_migration_heads(
@@ -967,71 +989,71 @@ def test_each_setting_demands_its_own_migration_and_no_more(settings: Settings) 
                 applicability_scenarios_enabled=True,
             )
         )
-        == full[:1]
+        == full[:3]
     )
     assert (
         acceptable_migration_heads(on(applicability_library_enabled=True, applicability_scenarios_enabled=True))
-        == full[:3]
+        == full[:5]
     )
     # APPL-X3: saved policies need 0039, and are on only with the library
     assert (
         acceptable_migration_heads(on(applicability_library_enabled=True, applicability_policies_enabled=True))
-        == full[:2]
+        == full[:4]
     )
     assert acceptable_migration_heads(on(applicability_policies_enabled=True)) == full
     # APPL-X2: the applicability library needs 0038, whatever else is on; with it off everything is one further
-    assert acceptable_migration_heads(on(applicability_library_enabled=True)) == full[:3]
+    assert acceptable_migration_heads(on(applicability_library_enabled=True)) == full[:5]
     # SHARED-1: rules on their own need 0037, whatever else is on; with it off everything is one revision further
-    assert acceptable_migration_heads(on(shared_rule_services_enabled=True)) == full[:4]
+    assert acceptable_migration_heads(on(shared_rule_services_enabled=True)) == full[:6]
     # LIB-2: standalone modules need 0036, and are on only with the library; with them off everything below is as it
     # was, one revision further from the head
     lib_ = on(survey_definitions_enabled=True, survey_library_enabled=True)
-    assert acceptable_migration_heads(lib_.model_copy(update={"survey_module_authoring_enabled": True})) == full[:5]
+    assert acceptable_migration_heads(lib_.model_copy(update={"survey_module_authoring_enabled": True})) == full[:7]
     assert (
         acceptable_migration_heads(on(survey_definitions_enabled=True, survey_module_authoring_enabled=True))
-        == full[:14]
+        == full[:16]
     )
-    assert acceptable_migration_heads(lib_) == full[:13]
+    assert acceptable_migration_heads(lib_) == full[:15]
     ev_ = on(survey_definitions_enabled=True, survey_simulation_enabled=True, survey_evaluation_enabled=True)
     # EVAL-2B: execution assurance needs 0035, and is on only with evaluation
-    assert acceptable_migration_heads(ev_.model_copy(update={"survey_execution_assurance_enabled": True})) == full[:6]
+    assert acceptable_migration_heads(ev_.model_copy(update={"survey_execution_assurance_enabled": True})) == full[:8]
     assert (
         acceptable_migration_heads(
             on(survey_definitions_enabled=True, survey_simulation_enabled=True, survey_execution_assurance_enabled=True)
         )
-        == full[:12]
+        == full[:14]
     )
     # EVAL-2A: control policies need 0034, and are on only with evaluation
-    assert acceptable_migration_heads(ev_.model_copy(update={"survey_control_policy_enabled": True})) == full[:7]
-    assert acceptable_migration_heads(ev_) == full[:8]  # EVAL-1: evaluation needs 0033, and is on only with simulation
+    assert acceptable_migration_heads(ev_.model_copy(update={"survey_control_policy_enabled": True})) == full[:9]
+    assert acceptable_migration_heads(ev_) == full[:10]  # EVAL-1: evaluation needs 0033, and is on only with simulation
     sim_ = on(survey_definitions_enabled=True, survey_simulation_enabled=True)
-    assert acceptable_migration_heads(sim_.model_copy(update={"survey_control_policy_enabled": True})) == full[:12]
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_evaluation_enabled=True)) == full[:14]
+    assert acceptable_migration_heads(sim_.model_copy(update={"survey_control_policy_enabled": True})) == full[:14]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_evaluation_enabled=True)) == full[:16]
     assert acceptable_migration_heads(on(survey_evaluation_enabled=True)) == full
     assert acceptable_migration_heads(on()) == full
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True)) == full[:14]
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_library_enabled=True)) == full[:13]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True)) == full[:16]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_library_enabled=True)) == full[:15]
     assert acceptable_migration_heads(on(survey_library_enabled=True)) == full  # the library alone is not on
     # SS-03B: simulation needs 0029, whatever else is on; alone (without survey definitions) it is not on
     both = on(survey_definitions_enabled=True, survey_simulation_enabled=True)
-    assert acceptable_migration_heads(both) == full[:12]
-    assert acceptable_migration_heads(both.model_copy(update={"survey_library_enabled": True})) == full[:12]
+    assert acceptable_migration_heads(both) == full[:14]
+    assert acceptable_migration_heads(both.model_copy(update={"survey_library_enabled": True})) == full[:14]
     assert acceptable_migration_heads(on(survey_simulation_enabled=True)) == full
     # ASG-1: assignment needs 0030, and is on only with simulation
     asg = both.model_copy(update={"survey_assignment_enabled": True})
-    assert acceptable_migration_heads(asg) == full[:11]
-    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_assignment_enabled=True)) == full[:14]
+    assert acceptable_migration_heads(asg) == full[:13]
+    assert acceptable_migration_heads(on(survey_definitions_enabled=True, survey_assignment_enabled=True)) == full[:16]
     # ASG-2A: requirement groups need 0031, and are on only with assignment
     groups = asg.model_copy(update={"survey_assignment_groups_enabled": True})
-    assert acceptable_migration_heads(groups) == full[:10]
-    assert acceptable_migration_heads(both.model_copy(update={"survey_assignment_groups_enabled": True})) == full[:12]
+    assert acceptable_migration_heads(groups) == full[:12]
+    assert acceptable_migration_heads(both.model_copy(update={"survey_assignment_groups_enabled": True})) == full[:14]
     # ASG-2B: coordinated simulation needs 0032, and is on only with requirement groups
     assert (
         acceptable_migration_heads(groups.model_copy(update={"survey_coordinated_simulation_enabled": True}))
-        == full[:9]
+        == full[:11]
     )
     assert (
-        acceptable_migration_heads(asg.model_copy(update={"survey_coordinated_simulation_enabled": True})) == full[:11]
+        acceptable_migration_heads(asg.model_copy(update={"survey_coordinated_simulation_enabled": True})) == full[:13]
     )
 
 

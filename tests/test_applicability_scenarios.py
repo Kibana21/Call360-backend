@@ -30,7 +30,7 @@ from app.domain.survey.applicability import scenarios as sc
 from app.domain.survey.applicability.logic import Workspace
 from app.domain.survey.canonical import sha256_hex
 from app.main import MIGRATION_HEAD, acceptable_migration_heads, create_app
-from tests.support import ORIGIN, csrf_header, make_account, migrate
+from tests.support import JOURNEY_TABLES, ORIGIN, PUBLICATION_TABLES, csrf_header, make_account, migrate
 from tests.test_applicability_library import BOOL, FAMILY, A, check, created, get, published, ref, revise
 from tests.test_applicability_library import put as put_asset
 from tests.test_applicability_policies import P as POLICIES
@@ -166,7 +166,7 @@ def everything_else(engine: Engine) -> dict[str, tuple[int, str]]:
                 f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{T}' AND table_type = 'BASE TABLE' AND table_name <> 'alembic_version'"
             )
         ).scalars()
-        for name in sorted(n for n in names if n not in TABLES):
+        for name in sorted(n for n in names if n not in TABLES and n not in PUBLICATION_TABLES and n not in JOURNEY_TABLES):
             row = c.execute(
                 text(
                     f"SELECT count(*), coalesce(md5(string_agg(md5(t::text), '' ORDER BY md5(t::text))), '') FROM {T}.\"{name}\" t"
@@ -198,10 +198,13 @@ def test_off_by_default_and_twenty_two_operations_with_no_new_permission(setting
             "applicability_scenarios_enabled": True,
         }
     )
-    assert MIGRATION_HEAD == "0040_applicability_scenarios" and acceptable_migration_heads(on) == (MIGRATION_HEAD,)
+    # APPL-X4b moved the head to 0041; with publication off, a schema at 0040 serves scenarios, suites and runs
+    assert acceptable_migration_heads(on) == (MIGRATION_HEAD, "0041_applicability_publication", "0040_applicability_scenarios")
     # with scenarios off, a schema still at 0039 serves saved policies correctly
     assert acceptable_migration_heads(on.model_copy(update={"applicability_scenarios_enabled": False})) == (
         MIGRATION_HEAD,
+        "0041_applicability_publication",
+        "0040_applicability_scenarios",
         "0039_applicability_policy",
     )
     with engine.connect() as c:
@@ -1381,7 +1384,7 @@ def test_zz_migration_0040_is_additive_reversible_while_empty_atomic_and_keeps_e
     p = {k: _client(x4_app, a_) for k, a_ in accounts.items()}
     try:
         w = world(p)
-        assert _head(engine) == MIGRATION_HEAD == "0040_applicability_scenarios"
+        assert _head(engine) == MIGRATION_HEAD
         full = _objects(engine)
         assert full == (sorted(TABLES), FUNCTIONS)
         before = everything_else(engine)
@@ -1429,10 +1432,13 @@ def test_zz_migration_0040_is_additive_reversible_while_empty_atomic_and_keeps_e
         s = saved(p["author"], "KEPT", {"product_family": "ILP", "nftf": False})
         with pytest.raises(RuntimeError, match="saved scenarios exist"):
             migrate(settings, "0039_applicability_policy", down=True)
+        assert _head(engine) == "0040_applicability_scenarios"  # 0041 (no candidate) rolled back first; 0040 refused
+        migrate(settings, "head")
         u = suite(p["author"], "KEPT", w["policy"]["id"], [(s, expect("RESOLVED", w["a"]))])
         r = run(p["author"], u["id"])
         with pytest.raises(RuntimeError, match="recorded evaluation runs exist"):
             migrate(settings, "0039_applicability_policy", down=True)
+        migrate(settings, "head")
         assert (
             _head(engine) == MIGRATION_HEAD
             and p["author"].get(f"{R}/{r['id']}").json()["run_sha256"] == r["run_sha256"]

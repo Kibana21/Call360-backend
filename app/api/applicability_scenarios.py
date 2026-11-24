@@ -287,6 +287,10 @@ class ApplicabilitySuiteMember(BaseModel):
     profiles: list[str]
     baseline_id: str | None
     expectation: dict[str, Any] | None
+    expectation_stated_by: str | None = Field(
+        default=None, description="Who stated this expected outcome (stamped by the server when its content changes)."
+    )
+    expectation_stated_at: str | None = None
     scenario_changed: bool = Field(description="The scenario was saved again after its expectation was last reviewed.")
 
 
@@ -329,12 +333,19 @@ class ApplicabilityRunIn(BaseModel):
         max_length=80,
         description="Chosen by the client; the same key for the same suite returns the run already recorded.",
     )
+    target: dict[str, Any] | None = Field(
+        default=None,
+        description="APPL-X4b: exactly what to evaluate — {kind: DRAFT, revision} | {kind: CANDIDATE, id} | {kind: VERSION, id}. REQUIRED once the policy has a candidate or a published version; nothing is assumed then.",
+    )
 
 
 class ApplicabilityRunSummary(BaseModel):
     id: str
     market_code: str
     record_class: Literal["SYNTHETIC"]
+    target: dict[str, Any] = Field(
+        description="Exactly what was evaluated: the saved draft at a revision, a candidate, or a published version — with its fingerprints."
+    )
     suite_id: str
     suite_code: str
     suite_name: str
@@ -740,8 +751,18 @@ def applicability_suite_run(suite_id: uuid.UUID, body: ApplicabilityRunIn, reque
     could not be evaluated, or has no expectation, never passes."""
     _write(request, auth)
     _write(request, auth, computing=True)
+    subject = None
+    if request.app.state.settings.applicability_publication_enabled:
+        from app.domain.survey.applicability import publication as pub  # the tables of 0041 exist only then
+
+        subject = _try(lambda: pub.run_subject(db, _markets(auth), suite_id, body.target))
+    elif body.target is not None and body.target.get("kind") != "DRAFT":
+        raise AppError(422, "INVALID_TARGET", "Only the saved working draft can be evaluated here")
     rid, new = _act(
-        db, lambda: sc.run_suite(db, _markets(auth), suite_id, body.idempotency_key, auth.actor, request_meta(request))
+        db,
+        lambda: sc.run_suite(
+            db, _markets(auth), suite_id, body.idempotency_key, auth.actor, request_meta(request), subject
+        ),
     )
     return _run(db, auth, rid, replayed=not new)
 

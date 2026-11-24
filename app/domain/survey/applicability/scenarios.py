@@ -22,6 +22,8 @@ import re
 import time
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -489,6 +491,17 @@ def _mismatches(pres: pol.Resolution, res: Resolved) -> list[dict[str, Any]]:
     return out
 
 
+@dataclass
+class Subject:
+    """Exactly what a run evaluates: the saved working draft at one revision, a frozen candidate, or a published version."""
+
+    evaluator: Evaluator
+    revision: int
+    document: Mapping[str, Any]
+    document_sha256: str
+    target: dict[str, Any]
+
+
 class Evaluator:
     """One policy document resolved once; any number of scenarios evaluated against it by the Python evaluator."""
 
@@ -506,6 +519,25 @@ class Evaluator:
                 self.fingerprint = ev_.fingerprint(Workspace(self.res.workspace), self.edoc)
             except _BAD:
                 self.fingerprint = None
+
+    @classmethod
+    def frozen(cls, db: Session, policy: Mapping[str, Any], doc: Mapping[str, Any], manifest: Mapping[str, Any], *, source: str) -> Evaluator:  # fmt: skip
+        """A FROZEN policy — a candidate or a published version: its own stored document and the definitions stored with
+        it. The library is not asked what those definitions are; it is only read for the scenarios' own pins."""
+        self = cls.__new__(cls)
+        self.market = lib.Market(db, policy["market_code"])
+        self.policy, self.doc, self.source = policy, doc, source
+        self.res = pol.Resolution()
+        self.res.workspace = {k: list(v) for k, v in manifest["workspace"].items()}
+        self.res.entries = [dict(e) for e in manifest["snapshot"].get("dependencies") or []]
+        self.snapshot = dict(manifest["snapshot"])
+        self.edoc = pol.evaluator_document(policy, doc)
+        self.blocked, self.reasons = None, []
+        try:
+            self.fingerprint = ev_.fingerprint(Workspace(self.res.workspace), self.edoc)
+        except _BAD:
+            self.fingerprint = None
+        return self
 
     def head(self) -> dict[str, Any]:
         return {"policy_source": self.source, "status": self.blocked or "OK", "contract": CONTRACT, "policy_fingerprint": self.fingerprint,
@@ -629,6 +661,14 @@ def compare_scenarios(db: Session, markets: Sequence[str], policy_id: uuid.UUID,
 
 
 # ---------------------------------------------------------------------------------------------------------- suites
+#: what the server adds to a stated expectation; never part of what the person stated
+EXPECTATION_META = ("reviewed_at_revision", "stated_by", "stated_at")
+
+
+def _stated(e: Mapping[str, Any] | None) -> dict[str, Any]:
+    return {k: v for k, v in (e or {}).items() if k not in EXPECTATION_META}
+
+
 def expectation(raw: Any) -> dict[str, Any] | None:
     """What a person says the result must be. It is stored as stated — never filled in from an actual result here."""
     if raw is None:
@@ -718,7 +758,7 @@ def _suite_fingerprint(doc: Mapping[str, Any], purpose: str, members: Sequence[M
     return sha256_hex({"document": doc, "purpose": purpose, "members": [{"scenario_id": str(m["scenario_id"]), "expectation": m["expectation"]} for m in members]})  # fmt: skip
 
 
-def _suite_input(db: Session, markets: Sequence[str], market: str, raw: Any, purpose: str, members: Sequence[Mapping[str, Any]], old: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:  # fmt: skip
+def _suite_input(db: Session, markets: Sequence[str], market: str, raw: Any, purpose: str, members: Sequence[Mapping[str, Any]], old: Mapping[str, Any] | None = None, actor: Actor | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:  # fmt: skip
     if not isinstance(raw, Mapping) or not isinstance(raw.get("name"), str) or not 2 <= len(raw["name"].strip()) <= 160:
         raise _bad("NAME_REQUIRED", "Give the suite a name of 2 to 160 characters")
     doc = {"name": raw["name"].strip(), "description": str(raw.get("description") or "").strip()[:2000]}
@@ -748,8 +788,17 @@ def _suite_input(db: Session, markets: Sequence[str], market: str, raw: Any, pur
         if exp is not None:
             # when the expectation was last stated is kept with it, so a later change of the scenario can be noticed
             prior = (old or {}).get(str(sid))
-            same = prior is not None and {k: v for k, v in prior.items() if k != "reviewed_at_revision"} == exp
+            same = prior is not None and _stated(prior) == exp
             exp["reviewed_at_revision"] = prior["reviewed_at_revision"] if same and prior else s["draft_revision"]
+            # APPL-X4b: WHO stated this outcome and WHEN is stamped by the server whenever its stated content changes — and
+            # only then. An expectation saved before this existed keeps no stamp: its author is read from the suite's
+            # append-only history, and is labelled as such; nobody is invented.
+            if same and prior:
+                for key in ("stated_by", "stated_at"):
+                    if prior.get(key):
+                        exp[key] = prior[key]
+            elif actor is not None:
+                exp["stated_by"], exp["stated_at"] = _ref(actor), datetime.now(UTC).isoformat(timespec="seconds")
         out.append({"scenario_id": sid, "expectation": exp})
     return doc, out
 
@@ -769,7 +818,7 @@ def create_suite(db: Session, markets: Sequence[str], market: str, code: str, po
         raise SurveyError(403, "MARKET_NOT_IN_SCOPE", "You cannot work with suites of this market")
     _code(db, SUITE, market, code)
     _policy_of(db, markets, market, policy_id)
-    doc, rows = _suite_input(db, markets, market, raw, purpose, members)
+    doc, rows = _suite_input(db, markets, market, raw, purpose, members, None, actor)
     uid = uuid.uuid4()
     db.execute(
         text("INSERT INTO applicability_suite (id, market_code, code, policy_id, purpose, document, document_sha256, draft_updated_by, created_by) VALUES (:i, :m, :c, :p, :pu, CAST(:d AS jsonb), :h, :by, :by)"),
@@ -789,12 +838,12 @@ def save_suite(db: Session, markets: Sequence[str], uid: uuid.UUID, expected: in
     _stale(u, expected, "suite", db)
     had = _members(db, uid)
     old = {str(m["id"]): m["expectation"] for m in had if m["expectation"]}
-    doc, rows = _suite_input(db, markets, u["market_code"], raw, purpose, members, old)
+    doc, rows = _suite_input(db, markets, u["market_code"], raw, purpose, members, old, actor)
     fingerprint = _suite_fingerprint(doc, purpose, rows)
     if fingerprint == u["document_sha256"]:
         raise SurveyError(409, "NOTHING_CHANGED", "Nothing changed since the last save")
     before, after = {str(m["id"]) for m in had}, {str(m["scenario_id"]) for m in rows}
-    changed = sorted(str(m["scenario_id"]) for m in rows if str(m["scenario_id"]) in before and {k: v for k, v in (old.get(str(m["scenario_id"])) or {}).items() if k != "reviewed_at_revision"} != {k: v for k, v in (m["expectation"] or {}).items() if k != "reviewed_at_revision"})  # fmt: skip
+    changed = sorted(str(m["scenario_id"]) for m in rows if str(m["scenario_id"]) in before and _stated(old.get(str(m["scenario_id"]))) != _stated(m["expectation"]))  # fmt: skip
     db.execute(
         text("UPDATE applicability_suite SET document = CAST(:d AS jsonb), document_sha256 = :h, purpose = :pu, draft_revision = draft_revision + 1, draft_updated_at = now(), draft_updated_by = :by WHERE id = :i"),
         {"d": json.dumps(doc), "h": fingerprint, "pu": purpose, "by": _ref(actor), "i": uid},
@@ -856,6 +905,18 @@ def suite_detail(db: Session, markets: Sequence[str], uid: uuid.UUID) -> dict[st
             "draft_revision": m["draft_revision"], "facts": m["document"].get("facts") or {}, "profiles": m["document"].get("profiles") or [],
             "baseline_id": str(m["baseline_id"]) if m["baseline_id"] else None, "expectation": exp, "scenario_changed": moved,
         })  # fmt: skip
+    stated_names = lib._names(
+        db,
+        [
+            (m["expectation"] or {}).get("stated_by")
+            for m in out["member_list"]
+            if (m["expectation"] or {}).get("stated_by")
+        ],
+    )  # noqa: SLF001
+    for m in out["member_list"]:
+        exp = m["expectation"] or {}
+        m["expectation_stated_by"] = stated_names.get(str(exp.get("stated_by"))) if exp.get("stated_by") else None
+        m["expectation_stated_at"] = exp.get("stated_at")
     if not members:
         diagnostics.append(_d("BLOCKER", "EMPTY_SUITE", "This suite holds no scenario yet"))
     out["diagnostics"] = diagnostics
@@ -997,7 +1058,7 @@ def _digest(results: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
              "outcome": r["outcome"], "plan": r["plan_fingerprint"], "differences": r["differences"]} for r in results]  # fmt: skip
 
 
-def run_suite(db: Session, markets: Sequence[str], uid: uuid.UUID, idempotency_key: str, actor: Actor, meta: RequestMeta | None = None) -> tuple[uuid.UUID, bool]:  # fmt: skip
+def run_suite(db: Session, markets: Sequence[str], uid: uuid.UUID, idempotency_key: str, actor: Actor, meta: RequestMeta | None = None, subject: Subject | None = None) -> tuple[uuid.UUID, bool]:  # fmt: skip
     """Evaluate every member against the policy's SAVED revision and record the whole thing, once. The same key for the
     same suite returns the run that was already recorded. Nothing recorded is ever changed."""
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{8,80}", idempotency_key or ""):
@@ -1013,7 +1074,12 @@ def run_suite(db: Session, markets: Sequence[str], uid: uuid.UUID, idempotency_k
         raise _bad("EMPTY_SUITE", "This suite holds no scenario to run", 409)
     p = pol.policy_row(db, u["policy_id"], markets)
     started = time.monotonic()
-    ev = Evaluator(db, p, p["document"], p["snapshot"], source="SAVED")
+    if subject is None:
+        ev = Evaluator(db, p, p["document"], p["snapshot"], source="SAVED")
+        target = {"kind": "DRAFT", "revision": p["draft_revision"], "document_sha256": p["document_sha256"], "manifest_sha256": sha256_hex(ev.snapshot)}  # fmt: skip
+    else:  # a frozen candidate or published version: its own document and revision are what is recorded
+        ev, target = subject.evaluator, subject.target
+        p = {**p, "document": subject.document, "draft_revision": subject.revision, "document_sha256": subject.document_sha256}  # fmt: skip
     gating = u["purpose"] == "PUBLICATION_GATING"
     results: list[dict[str, Any]] = []
     for m in members:
@@ -1039,7 +1105,7 @@ def run_suite(db: Session, markets: Sequence[str], uid: uuid.UUID, idempotency_k
               else "FAILED" if count["FAILED"] else "PASSED")  # fmt: skip
     cover = coverage(p["document"], results, u["purpose"], status == "PASSED")
     record = {
-        "contract": RUN_CONTRACT, "evaluator": CONTRACT, "record_class": "SYNTHETIC",
+        "contract": RUN_CONTRACT, "evaluator": CONTRACT, "record_class": "SYNTHETIC", "target": target,
         "policy": {"id": str(p["id"]), "code": p["code"], "market": p["market_code"], "revision": p["draft_revision"], "document": p["document"], "snapshot": ev.snapshot,
                    "document_sha256": p["document_sha256"], "snapshot_sha256": sha256_hex(ev.snapshot), "status": ev.blocked or "OK", "reasons": ev.reasons if ev.blocked else [],
                    "workspace": {k: [x for x in v if not x.get("scenario_context")] for k, v in ev.res.workspace.items()} if not ev.blocked else None},
@@ -1080,14 +1146,16 @@ def run_suite(db: Session, markets: Sequence[str], uid: uuid.UUID, idempotency_k
 RUN_SQL = (
     "SELECT r.id, r.market_code, r.suite_id, r.suite_revision, r.suite_purpose, r.policy_id, r.policy_revision, r.policy_document_sha256, r.policy_snapshot_sha256, r.policy_fingerprint, "
     "r.evaluator_contract, r.status, r.scenarios, r.passed, r.failed, r.not_evaluated, r.invalid, r.no_expectation, r.record_sha256, r.run_sha256, r.duration_ms, r.created_at, r.created_by, "
-    "u.code AS suite_code, u.document->>'name' AS suite_name, p.code AS policy_code, p.document->>'name' AS policy_name, pr.display_name "
+    "r.record->'target' AS target, u.code AS suite_code, u.document->>'name' AS suite_name, p.code AS policy_code, p.document->>'name' AS policy_name, pr.display_name "
     "FROM applicability_evaluation_run r JOIN applicability_suite u ON u.id = r.suite_id JOIN applicability_policy p ON p.id = r.policy_id LEFT JOIN principal pr ON CAST(pr.id AS text) = r.created_by "
 )
 
 
 def _run_summary(r: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "id": str(r["id"]), "market_code": r["market_code"], "record_class": "SYNTHETIC", "suite_id": str(r["suite_id"]), "suite_code": r["suite_code"], "suite_name": r["suite_name"] or r["suite_code"],
+        "id": str(r["id"]), "market_code": r["market_code"], "record_class": "SYNTHETIC", "suite_id": str(r["suite_id"]),
+        # exactly what was evaluated; a run recorded before targets existed was of the saved draft at that revision
+        "target": r["target"] or {"kind": "DRAFT", "revision": r["policy_revision"], "document_sha256": r["policy_document_sha256"], "manifest_sha256": r["policy_snapshot_sha256"]}, "suite_code": r["suite_code"], "suite_name": r["suite_name"] or r["suite_code"],
         "suite_revision": r["suite_revision"], "suite_purpose": r["suite_purpose"], "policy_id": str(r["policy_id"]), "policy_code": r["policy_code"], "policy_name": r["policy_name"] or r["policy_code"],
         "policy_revision": r["policy_revision"], "policy_document_sha256": r["policy_document_sha256"], "policy_snapshot_sha256": r["policy_snapshot_sha256"], "policy_fingerprint": r["policy_fingerprint"],
         "evaluator_contract": r["evaluator_contract"], "status": r["status"], "scenarios": r["scenarios"], "passed": r["passed"], "failed": r["failed"], "not_evaluated": r["not_evaluated"],
@@ -1216,10 +1284,6 @@ def _dependency_changes(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[dict
         if x is None or y is None or x["content_sha256"] != y["content_sha256"]:
             out.append({"kind": k[0], "code": k[1], "before": at(x), "after": at(y), "change": "ADDED" if x is None else "REMOVED" if y is None else "VERSION"})  # fmt: skip
     return out
-
-
-def _stated(e: Mapping[str, Any] | None) -> dict[str, Any]:
-    return {k: v for k, v in (e or {}).items() if k != "reviewed_at_revision"}
 
 
 def _pairs(before: Sequence[Mapping[str, Any]], after: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

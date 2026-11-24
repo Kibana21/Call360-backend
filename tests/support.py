@@ -114,6 +114,21 @@ SCENARIO_TABLES = (
     "applicability_scenario", "applicability_scenario_dependency", "applicability_suite", "applicability_suite_member",
     "applicability_scenario_event", "applicability_evaluation_run", "applicability_evaluation_result",
 )  # fmt: skip
+#: APPL-X4b (0041): policy candidates and published versions.
+PUBLICATION_TABLES = (
+    "applicability_policy_candidate",
+    "applicability_policy_candidate_dependency",
+    "applicability_policy_candidate_event",
+    "applicability_policy_version",
+)
+#: APPL-X5a (0042): fact correspondences, selection plans, journeys.
+JOURNEY_TABLES = (
+    "applicability_fact_correspondence",
+    "applicability_selection_plan",
+    "applicability_journey",
+    "applicability_journey_step",
+    "applicability_journey_event",
+)
 #: APPL-X2 (0038) and APPL-X3 (0039): the applicability tables. A downgrade below 0038 removes them all.
 APPLICABILITY_TABLES = frozenset(
     {
@@ -122,5 +137,7 @@ APPLICABILITY_TABLES = frozenset(
         "applicability_policy", "applicability_policy_dependency", "applicability_policy_event",
         # APPL-X4a (migration 0040): scenarios, suites and recorded runs
         *SCENARIO_TABLES,
+        *PUBLICATION_TABLES,
+        *JOURNEY_TABLES,
     }
 )  # fmt: skip
